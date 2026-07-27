@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>local.miniasana-tunnel</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/YOUR_USERNAME/bin/cloudflared</string>
+		<string>tunnel</string>
+		<string>--url</string>
+		<string>http://localhost:8787</string>
+		<string>--no-autoupdate</string>
+		<string>--protocol</string>
+		<string>http2</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/Users/YOUR_USERNAME/mini-asana/tunnel.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/YOUR_USERNAME/mini-asana/tunnel.log</string>
+</dict>
+</plist>

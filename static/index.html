@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Home improvement tracker</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="sidebar-logo">◆ mini-asana <button id="btn-menu-close" title="关闭菜单">✕</button></div>
+      <nav class="sidebar-nav">
+        <div class="nav-item active">🏠 我的任务</div>
+      </nav>
+      <div class="sidebar-section-title">项目</div>
+      <div class="nav-item project-item">🛠️ Home improvement tracker</div>
+    </aside>
+    <div id="sidebar-backdrop" class="hidden"></div>
+
+    <div id="main">
+      <header id="topbar">
+        <button id="btn-menu" title="菜单">☰</button>
+        <h1 id="project-title">Home improvement tracker</h1>
+        <div id="stats"></div>
+        <button id="btn-logout" title="清除本地 token 并退出">退出登录</button>
+      </header>
+      <div id="tabs">
+        <button class="tab active" data-view="list">列表</button>
+        <button class="tab" data-view="board">看板</button>
+        <button class="tab" data-view="timeline">时间线</button>
+        <button class="tab" data-view="calendar">日历</button>
+        <button id="btn-new-section" title="新增分组">＋ 分组</button>
+      </div>
+      <div id="view-container"></div>
+    </div>
+
+    <aside id="detail-panel" class="hidden">
+      <div class="detail-header">
+        <span>任务详情</span>
+        <button id="detail-close">✕</button>
+      </div>
+      <div id="detail-body"></div>
+    </aside>
+  </div>
+
+  <datalist id="dl-assignees"></datalist>
+
+  <!-- 登录遮罩：无 token 或 API 返回 401 时显示 -->
+  <div id="login-overlay" class="hidden">
+    <div class="login-card">
+      <div class="login-logo">◆ mini-asana</div>
+      <p class="login-tip">Home improvement tracker · 请输入访问 token</p>
+      <form id="login-form">
+        <input type="password" id="login-token" placeholder="访问 token" autocomplete="off">
+        <button type="submit">进入</button>
+      </form>
+      <p class="login-error" id="login-error"></p>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

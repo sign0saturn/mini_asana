@@ -1,0 +1,6 @@
+# 真实数据与密钥不入库
+data/tasks.json
+data/auth_token.txt
+data/backups/
+*.log
+.DS_Store
