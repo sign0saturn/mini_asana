@@ -9,36 +9,39 @@
 <body>
   <div id="app">
     <aside id="sidebar">
-      <div class="sidebar-logo">◆ mini-asana <button id="btn-menu-close" title="关闭菜单">✕</button></div>
+      <div class="sidebar-logo">◆ mini-asana <button id="btn-menu-close" title="关闭菜单" data-i18n-title="menu.close">✕</button></div>
       <nav class="sidebar-nav">
-        <div class="nav-item active">🏠 我的任务</div>
+        <div class="nav-item active" data-i18n="nav.myTasks">🏠 我的任务</div>
       </nav>
-      <div class="sidebar-section-title">项目</div>
+      <div class="sidebar-section-title" data-i18n="sidebar.projects">项目</div>
       <div id="project-list"></div>
-      <button id="btn-new-project" type="button" title="新建项目">＋ 新建项目</button>
+      <button id="btn-new-project" type="button" title="新建项目" data-i18n="btn.newProject" data-i18n-title="project.addTitle">＋ 新建项目</button>
+      <div id="lang-switch">
+        <button type="button" data-lang="zh">中文</button><span class="lang-sep">/</span><button type="button" data-lang="en">EN</button>
+      </div>
     </aside>
     <div id="sidebar-backdrop" class="hidden"></div>
 
     <div id="main">
       <header id="topbar">
-        <button id="btn-menu" title="菜单">☰</button>
+        <button id="btn-menu" title="菜单" data-i18n-title="menu.open">☰</button>
         <h1 id="project-title">Home improvement tracker</h1>
         <div id="stats"></div>
-        <button id="btn-logout" title="清除本地 token 并退出">退出登录</button>
+        <button id="btn-logout" title="清除本地 token 并退出" data-i18n="btn.logout" data-i18n-title="btn.logoutTitle">退出登录</button>
       </header>
       <div id="tabs">
-        <button class="tab active" data-view="list">列表</button>
-        <button class="tab" data-view="board">看板</button>
-        <button class="tab" data-view="timeline">时间线</button>
-        <button class="tab" data-view="calendar">日历</button>
-        <button id="btn-new-section" title="新增分组">＋ 分组</button>
+        <button class="tab active" data-view="list" data-i18n="tab.list">列表</button>
+        <button class="tab" data-view="board" data-i18n="tab.board">看板</button>
+        <button class="tab" data-view="timeline" data-i18n="tab.timeline">时间线</button>
+        <button class="tab" data-view="calendar" data-i18n="tab.calendar">日历</button>
+        <button id="btn-new-section" title="新增分组" data-i18n="btn.newSection" data-i18n-title="section.addTitle">＋ 分组</button>
       </div>
       <div id="view-container"></div>
     </div>
 
     <aside id="detail-panel" class="hidden">
       <div class="detail-header">
-        <span>任务详情</span>
+        <span data-i18n="detail.title">任务详情</span>
         <button id="detail-close">✕</button>
       </div>
       <div id="detail-body"></div>
@@ -51,10 +54,10 @@
   <div id="login-overlay" class="hidden">
     <div class="login-card">
       <div class="login-logo">◆ mini-asana</div>
-      <p class="login-tip">Home improvement tracker · 请输入访问 token</p>
+      <p class="login-tip" data-i18n="login.tip">Home improvement tracker · 请输入访问 token</p>
       <form id="login-form">
-        <input type="password" id="login-token" placeholder="访问 token" autocomplete="off">
-        <button type="submit">进入</button>
+        <input type="password" id="login-token" placeholder="访问 token" data-i18n-placeholder="login.tokenPh" autocomplete="off">
+        <button type="submit" data-i18n="login.enter">进入</button>
       </form>
       <p class="login-error" id="login-error"></p>
     </div>

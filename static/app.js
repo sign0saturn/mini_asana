@@ -64,6 +64,223 @@ function sectionTasks(sec) {
   return state.tasks.filter(t => t.section === sec).sort((a, b) => a.order - b.order);
 }
 
+/* ================= i18n ================= */
+/* UI chrome strings in zh/en. Task DATA (task names, section names, Category/Effort/Priority
+   values such as 高/中/低) is user content and is never translated — only chrome goes through tr(). */
+const I18N = {
+  zh: {
+    "nav.myTasks": "🏠 我的任务",
+    "sidebar.projects": "项目",
+    "menu.open": "菜单",
+    "menu.close": "关闭菜单",
+    "btn.logout": "退出登录",
+    "btn.logoutTitle": "清除本地 token 并退出",
+    "tab.list": "列表",
+    "tab.board": "看板",
+    "tab.timeline": "时间线",
+    "tab.calendar": "日历",
+    "btn.newSection": "＋ 分组",
+    "section.addTitle": "新增分组",
+    "section.namePh": "新分组名称",
+    "section.rename": "重命名分组",
+    "section.delete": "删除分组",
+    "column.rename": "重命名列",
+    "column.delete": "删除列",
+    "btn.newProject": "＋ 新建项目",
+    "project.addTitle": "新建项目",
+    "project.namePh": "新项目名称",
+    "project.rename": "重命名项目",
+    "project.delete": "删除项目",
+    "detail.title": "任务详情",
+    "login.tip": "Home improvement tracker · 请输入访问 token",
+    "login.tokenPh": "访问 token",
+    "login.enter": "进入",
+    "login.badToken": "token 不正确，请重试",
+    "app.loadFailed": "加载失败: {msg}",
+    "btn.cancel": "取消",
+    "btn.ok": "确认",
+    "btn.close": "关闭",
+    "btn.create": "创建",
+    "dlg.newTask": "新建任务",
+    "field.name": "任务名称",
+    "field.namePh": "要做什么？",
+    "field.section": "分组",
+    "field.assignee": "负责人",
+    "field.start": "开始日期",
+    "field.due": "截止日期",
+    "field.effort": "工作量",
+    "field.deps": "前置依赖",
+    "field.notes": "备注",
+    "deps.entry": "{name}（{section}）",
+    "select.none": "无",
+    "select.custom": "自定义…",
+    "select.customPrompt": "输入新值，回车确认",
+    "select.customValue": "输入新值",
+    "task.add": "＋ 添加任务",
+    "task.delete": "删除任务",
+    "task.markDone": "标记为完成",
+    "task.markUndone": "标记为未完成",
+    "task.dragHandle": "拖拽排序 / 移动分组",
+    "task.openDetail": "点击打开详情",
+    "task.openInAsana": "在 Asana 中打开 ↗",
+    "cell.clickEdit": "点击编辑",
+    "stats.openShort": "未完成",
+    "stats.openLong": "个未完成任务 · {done} 已完成",
+    "tl.corner": "任务 / 日期",
+    "tl.empty": "没有带日期的任务。在任务详情中设置开始/截止日期后会显示在这里。",
+    "tl.dueOnly": "截止 {date}",
+    "tl.skipped": "（{n} 个没有日期的任务未在时间线中显示）",
+    "cal.prev": "← 上月",
+    "cal.today": "今天",
+    "cal.next": "下月 →",
+    "cal.more": "+{n} 更多",
+    "confirm.deleteTask": "删除任务「{name}」？",
+    "confirm.deleteSection": "删除分组「{name}」？其中的任务会移到第一个分组。",
+    "confirm.deleteProject": "删除项目「{name}」？其中的任务会一并删除，不可恢复。",
+    "toast.createFailed": "创建失败: {msg}",
+    "toast.saveFailed": "保存失败: {msg}",
+    "toast.moveFailed": "移动失败: {msg}",
+    "toast.deleteFailed": "删除失败: {msg}",
+    "toast.renameFailed": "重命名失败: {msg}",
+    "toast.deleteSectionFailed": "删除分组失败: {msg}",
+    "toast.deleteProjectFailed": "删除项目失败: {msg}",
+    "toast.loadProjectFailed": "加载项目失败: {msg}",
+  },
+  en: {
+    "nav.myTasks": "🏠 My tasks",
+    "sidebar.projects": "Projects",
+    "menu.open": "Menu",
+    "menu.close": "Close menu",
+    "btn.logout": "Log out",
+    "btn.logoutTitle": "Clear the local token and log out",
+    "tab.list": "List",
+    "tab.board": "Board",
+    "tab.timeline": "Timeline",
+    "tab.calendar": "Calendar",
+    "btn.newSection": "＋ Section",
+    "section.addTitle": "Add section",
+    "section.namePh": "New section name",
+    "section.rename": "Rename section",
+    "section.delete": "Delete section",
+    "column.rename": "Rename column",
+    "column.delete": "Delete column",
+    "btn.newProject": "＋ New project",
+    "project.addTitle": "New project",
+    "project.namePh": "New project name",
+    "project.rename": "Rename project",
+    "project.delete": "Delete project",
+    "detail.title": "Task details",
+    "login.tip": "Home improvement tracker · Enter access token",
+    "login.tokenPh": "Access token",
+    "login.enter": "Enter",
+    "login.badToken": "Incorrect token, please try again",
+    "app.loadFailed": "Failed to load: {msg}",
+    "btn.cancel": "Cancel",
+    "btn.ok": "OK",
+    "btn.close": "Close",
+    "btn.create": "Create",
+    "dlg.newTask": "New task",
+    "field.name": "Task name",
+    "field.namePh": "What needs to be done?",
+    "field.section": "Section",
+    "field.assignee": "Assignee",
+    "field.start": "Start date",
+    "field.due": "Due date",
+    "field.effort": "Effort",
+    "field.deps": "Dependencies",
+    "field.notes": "Notes",
+    "deps.entry": "{name} ({section})",
+    "select.none": "None",
+    "select.custom": "Custom…",
+    "select.customPrompt": "Type a new value, Enter to confirm",
+    "select.customValue": "Type a new value",
+    "task.add": "＋ Add task",
+    "task.delete": "Delete task",
+    "task.markDone": "Mark as done",
+    "task.markUndone": "Mark as not done",
+    "task.dragHandle": "Drag to reorder / move section",
+    "task.openDetail": "Click to open details",
+    "task.openInAsana": "Open in Asana ↗",
+    "cell.clickEdit": "Click to edit",
+    "stats.openShort": "open",
+    "stats.openLong": "open tasks · {done} done",
+    "tl.corner": "Tasks / Dates",
+    "tl.empty": "No dated tasks. Set start/due dates in the task details and they will show up here.",
+    "tl.dueOnly": "Due {date}",
+    "tl.skipped": "({n} tasks without dates are not shown on the timeline)",
+    "cal.prev": "← Prev",
+    "cal.today": "Today",
+    "cal.next": "Next →",
+    "cal.more": "+{n} more",
+    "confirm.deleteTask": "Delete task \"{name}\"?",
+    "confirm.deleteSection": "Delete section \"{name}\"? Its tasks will be moved to the first section.",
+    "confirm.deleteProject": "Delete project \"{name}\"? All its tasks will be permanently deleted.",
+    "toast.createFailed": "Create failed: {msg}",
+    "toast.saveFailed": "Save failed: {msg}",
+    "toast.moveFailed": "Move failed: {msg}",
+    "toast.deleteFailed": "Delete failed: {msg}",
+    "toast.renameFailed": "Rename failed: {msg}",
+    "toast.deleteSectionFailed": "Failed to delete section: {msg}",
+    "toast.deleteProjectFailed": "Failed to delete project: {msg}",
+    "toast.loadProjectFailed": "Failed to load project: {msg}",
+  },
+};
+
+const LANG_KEY = "mini_asana_lang";
+function detectLang() {
+  try {
+    const saved = localStorage.getItem(LANG_KEY);
+    if (saved === "zh" || saved === "en") return saved;
+  } catch (_) {}
+  return /^zh/i.test(navigator.language || "") ? "zh" : "en";
+}
+let lang = detectLang();
+
+function locale() { return lang === "zh" ? "zh-CN" : "en-US"; }
+
+/* dictionary lookup with {var} interpolation (named tr: `t` is used as a task variable in many loops) */
+function tr(key, vars) {
+  const dict = I18N[lang] || I18N.zh;
+  let s = dict[key] != null ? dict[key] : I18N.zh[key];
+  if (s == null) return key;
+  if (vars) for (const k of Object.keys(vars)) s = s.split("{" + k + "}").join(String(vars[k]));
+  return s;
+}
+
+/* locale month label: zh "2026年7月" / en "July 2026" (m0 is 0-based) */
+function monthLabel(y, m0) {
+  return new Date(y, m0, 1).toLocaleString(locale(), { year: "numeric", month: "long" });
+}
+/* locale weekday labels Mon..Sun: zh 周一..周日 / en Mon..Sun (2024-01-01 was a Monday) */
+function weekdayLabels() {
+  return Array.from({ length: 7 }, (_, i) => new Date(2024, 0, 1 + i).toLocaleDateString(locale(), { weekday: "short" }));
+}
+
+/* translate static HTML via data-i18n / data-i18n-title / data-i18n-placeholder, and set <html lang> */
+function applyI18n() {
+  $$("[data-i18n]").forEach(el => { el.textContent = tr(el.dataset.i18n); });
+  $$("[data-i18n-title]").forEach(el => { el.title = tr(el.dataset.i18nTitle); });
+  $$("[data-i18n-placeholder]").forEach(el => { el.placeholder = tr(el.dataset.i18nPlaceholder); });
+  /* dynamically created elements (inline creators) tagged with i18n keys */
+  $$("[data-i18n-dynamic]").forEach(el => { el.textContent = tr(el.dataset.i18nDynamic); });
+  $$("[data-i18n-dynamic-ph]").forEach(el => { el.placeholder = tr(el.dataset.i18nDynamicPh); });
+  document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+}
+
+function updateLangSwitch() {
+  $$("#lang-switch button").forEach(b => b.classList.toggle("active", b.dataset.lang === lang));
+}
+
+function setLang(l) {
+  if (l !== "zh" && l !== "en") return;
+  lang = l;
+  try { localStorage.setItem(LANG_KEY, l); } catch (_) {}
+  applyI18n();
+  updateLangSwitch();
+  render(); // re-render all dynamic content in the new language
+}
+
+
 /* ================= touch dragging (Pointer Events, works on iOS Safari) ================= */
 /* Desktop still uses HTML5 DnD; this module only engages when pointerType === "touch".
    Two-condition trigger model to avoid misfires:
@@ -167,8 +384,8 @@ function confirmDialog(message, onOk) {
   ov.innerHTML = `<div class="confirm-card">
     <p class="confirm-msg">${esc(message)}</p>
     <div class="confirm-btns">
-      <button type="button" class="btn-cancel">取消</button>
-      <button type="button" class="btn-danger btn-ok">确认</button>
+      <button type="button" class="btn-cancel">${tr("btn.cancel")}</button>
+      <button type="button" class="btn-danger btn-ok">${tr("btn.ok")}</button>
     </div></div>`;
   document.body.appendChild(ov);
   const close = () => ov.remove();
@@ -190,7 +407,8 @@ function makeInlineCreator(opts) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "add-task-btn" + (opts.buttonClass ? " " + opts.buttonClass : "");
-  btn.textContent = opts.buttonLabel;
+  btn.textContent = opts.buttonLabelKey ? tr(opts.buttonLabelKey) : opts.buttonLabel;
+  if (opts.buttonLabelKey) btn.dataset.i18nDynamic = opts.buttonLabelKey; // applyI18n refreshes tagged buttons
   wrap.appendChild(btn);
 
   btn.addEventListener("click", () => {
@@ -198,7 +416,8 @@ function makeInlineCreator(opts) {
     form.className = "inline-creator-form";
     const inp = document.createElement("input");
     inp.className = "inline-input";
-    inp.placeholder = opts.placeholder || "";
+    inp.placeholder = opts.placeholderKey ? tr(opts.placeholderKey) : (opts.placeholder || "");
+    if (opts.placeholderKey) inp.dataset.i18nDynamicPh = opts.placeholderKey; // applyI18n refreshes open forms too
     inp.setAttribute("enterkeyhint", "done");
     inp.setAttribute("autocomplete", "off");
     inp.setAttribute("autocorrect", "off");
@@ -206,7 +425,7 @@ function makeInlineCreator(opts) {
     ok.type = "button";
     ok.className = "inline-creator-ok";
     ok.textContent = "✓";
-    ok.title = "确认";
+    ok.title = tr("btn.ok");
     form.appendChild(inp);
     form.appendChild(ok);
     btn.replaceWith(form);
@@ -227,7 +446,7 @@ function makeInlineCreator(opts) {
       try {
         await opts.onSubmit(name);
       } catch (e) {
-        showToast("创建失败: " + e.message, true);
+        showToast(tr("toast.createFailed", { msg: e.message }), true);
         submitting = false;
         inp.disabled = false;
         ok.disabled = false;
@@ -265,7 +484,7 @@ function fillSelectOptions(sel, field, current) {
   if (current && !vals.includes(current)) vals.push(current);
   const empty = document.createElement("option");
   empty.value = "";
-  empty.textContent = "无";
+  empty.textContent = tr("select.none");
   sel.appendChild(empty);
   for (const v of vals) {
     const o = document.createElement("option");
@@ -274,7 +493,7 @@ function fillSelectOptions(sel, field, current) {
   }
   const c = document.createElement("option");
   c.value = CUSTOM_OPT;
-  c.textContent = "自定义…";
+  c.textContent = tr("select.custom");
   sel.appendChild(c);
   sel.value = current || "";
 }
@@ -290,7 +509,7 @@ function makeSelectOrCustom(opts) {
     const inp = document.createElement("input");
     inp.type = "text";
     inp.className = "sel-custom-input";
-    inp.placeholder = "输入新值，回车确认";
+    inp.placeholder = tr("select.customPrompt");
     inp.setAttribute("autocomplete", "off");
     inp.setAttribute("autocorrect", "off");
     sel.replaceWith(inp);
@@ -316,7 +535,7 @@ function makeDialogSelect(field) {
   const inp = document.createElement("input");
   inp.type = "text";
   inp.className = "sel-custom-input";
-  inp.placeholder = "输入新值";
+  inp.placeholder = tr("select.customValue");
   inp.setAttribute("autocomplete", "off");
   inp.setAttribute("autocorrect", "off");
   inp.style.display = "none";
@@ -348,18 +567,18 @@ function openTaskDialog(prefill) {
   const ov = document.createElement("div");
   ov.className = "task-dialog-overlay";
   ov.innerHTML = `
-  <div class="task-dialog" role="dialog" aria-label="新建任务">
-    <div class="td-header"><span>新建任务</span><button type="button" class="td-close" title="关闭">✕</button></div>
+  <div class="task-dialog" role="dialog" aria-label="${tr("dlg.newTask")}">
+    <div class="td-header"><span>${tr("dlg.newTask")}</span><button type="button" class="td-close" title="${tr("btn.close")}">✕</button></div>
     <div class="td-body">
-      <label>任务名称 *</label>
-      <input class="td-name" type="text" placeholder="要做什么？" enterkeyhint="done" autocomplete="off" autocorrect="off">
-      <label>分组</label>
+      <label>${tr("field.name")} *</label>
+      <input class="td-name" type="text" placeholder="${tr("field.namePh")}" enterkeyhint="done" autocomplete="off" autocorrect="off">
+      <label>${tr("field.section")}</label>
       <select class="td-section"></select>
-      <label>负责人</label>
-      <input class="td-assignee" type="text" list="dl-assignees" autocomplete="off" placeholder="负责人">
+      <label>${tr("field.assignee")}</label>
+      <input class="td-assignee" type="text" list="dl-assignees" autocomplete="off" placeholder="${tr("field.assignee")}">
       <div class="td-row">
-        <div><label>开始日期</label><input class="td-start" type="date"></div>
-        <div><label>截止日期</label><input class="td-due" type="date"></div>
+        <div><label>${tr("field.start")}</label><input class="td-start" type="date"></div>
+        <div><label>${tr("field.due")}</label><input class="td-due" type="date"></div>
       </div>
       <label>Category</label>
       <div class="td-slot" data-f="category"></div>
@@ -369,8 +588,8 @@ function openTaskDialog(prefill) {
       </div>
     </div>
     <div class="td-footer">
-      <button type="button" class="td-cancel">取消</button>
-      <button type="button" class="td-submit" disabled>创建</button>
+      <button type="button" class="td-cancel">${tr("btn.cancel")}</button>
+      <button type="button" class="td-submit" disabled>${tr("btn.create")}</button>
     </div>
   </div>`;
   document.body.appendChild(ov);
@@ -428,7 +647,7 @@ function openTaskDialog(prefill) {
       });
       close();
     } catch (e) {
-      showToast("创建失败: " + e.message, true);
+      showToast(tr("toast.createFailed", { msg: e.message }), true);
       busy = false;
       submitBtn.disabled = false;
       cancelBtn.disabled = false;
@@ -516,7 +735,7 @@ async function switchProject(id) {
   try {
     await loadAll();
   } catch (e) {
-    showToast("加载项目失败: " + e.message, true);
+    showToast(tr("toast.loadProjectFailed", { msg: e.message }), true);
   }
   render();
 }
@@ -529,7 +748,7 @@ async function createProject(name) {
 }
 
 function removeProject(p) {
-  confirmDialog(`删除项目「${p.name}」？其中的任务会一并删除，不可恢复。`, async () => {
+  confirmDialog(tr("confirm.deleteProject", { name: p.name }), async () => {
     try {
       await api("DELETE", "/api/projects/" + encodeURIComponent(p.id));
       state.projects = state.projects.filter(x => x.id !== p.id);
@@ -542,7 +761,7 @@ function removeProject(p) {
       }
       render();
     } catch (e) {
-      showToast("删除项目失败: " + e.message, true);
+      showToast(tr("toast.deleteProjectFailed", { msg: e.message }), true);
     }
   });
 }
@@ -568,14 +787,14 @@ function renderProjects() {
     const ren = document.createElement("button");
     ren.type = "button";
     ren.textContent = "✎";
-    ren.title = "重命名项目";
+    ren.title = tr("project.rename");
     ren.addEventListener("click", e => { e.stopPropagation(); startProjectRename(p, name); });
     acts.appendChild(ren);
     if (state.projects.length > 1) {
       const del = document.createElement("button");
       del.type = "button";
       del.textContent = "🗑";
-      del.title = "删除项目";
+      del.title = tr("project.delete");
       del.addEventListener("click", e => { e.stopPropagation(); removeProject(p); });
       acts.appendChild(del);
     }
@@ -623,7 +842,7 @@ function startProjectRename(p, nameEl) {
       renderProjects();
       renderStats(); // topbar title follows the project name
     } catch (e) {
-      showToast("重命名失败: " + e.message, true);
+      showToast(tr("toast.renameFailed", { msg: e.message }), true);
       busy = false;
       inp.disabled = false;
       ok.disabled = false;
@@ -660,7 +879,7 @@ async function updateTask(id, patch, opts) {
     const saved = await papi("PUT", "/tasks/" + encodeURIComponent(id), patch);
     if (t) Object.assign(t, saved);
   } catch (e) {
-    showToast("保存失败: " + e.message, true);
+    showToast(tr("toast.saveFailed", { msg: e.message }), true);
     await loadAll();
   }
   if (!opts || !opts.silent) render(); // silent: skipped during batch commits; the caller renders once at the end
@@ -695,7 +914,7 @@ async function moveTask(taskId, targetSection, targetIndex) {
     }
     await papi("POST", "/reorder", { section: targetSection, ids: siblings.map(x => x.id) });
   } catch (e) {
-    showToast("移动失败: " + e.message, true);
+    showToast(tr("toast.moveFailed", { msg: e.message }), true);
     await loadAll();
     render();
   }
@@ -740,7 +959,7 @@ function startSectionRename(oldName, h3) {
       state.tasks.forEach(t => { if (t.section === oldName) t.section = name; });
       render();
     } catch (e) {
-      showToast("重命名失败: " + e.message, true);
+      showToast(tr("toast.renameFailed", { msg: e.message }), true);
       busy = false;
       inp.disabled = false;
       ok.disabled = false;
@@ -757,14 +976,14 @@ function startSectionRename(oldName, h3) {
   });
 }
 async function removeSection(name) {
-  confirmDialog(`删除分组「${name}」？其中的任务会移到第一个分组。`, async () => {
+  confirmDialog(tr("confirm.deleteSection", { name }), async () => {
     try {
       const r = await papi("DELETE", "/sections/" + encodeURIComponent(name));
       state.sections = r.sections;
       state.tasks.forEach(t => { if (t.section === name) t.section = r.moved_to; });
       render();
     } catch (e) {
-      showToast("删除分组失败: " + e.message, true);
+      showToast(tr("toast.deleteSectionFailed", { msg: e.message }), true);
     }
   });
 }
@@ -801,9 +1020,9 @@ function renderStats() {
   const open = state.tasks.filter(t => !t.completed).length;
   const done = state.tasks.length - open;
   if (window.matchMedia("(max-width: 768px)").matches) {
-    $("#stats").innerHTML = `<b>${open}</b> 未完成`;
+    $("#stats").innerHTML = `<b>${open}</b> ${tr("stats.openShort")}`;
   } else {
-    $("#stats").innerHTML = `<b>${open}</b> 个未完成任务 · ${done} 已完成`;
+    $("#stats").innerHTML = `<b>${open}</b> ${tr("stats.openLong", { done })}`;
   }
 }
 
@@ -840,7 +1059,7 @@ function makeCheckbox(task) {
   const b = document.createElement("button");
   b.className = "checkbox" + (task.completed ? " done" : "");
   b.textContent = task.completed ? "✓" : "";
-  b.title = task.completed ? "标记为未完成" : "标记为完成";
+  b.title = task.completed ? tr("task.markUndone") : tr("task.markDone");
   b.addEventListener("click", e => {
     e.stopPropagation();
     updateTask(task.id, { completed: !task.completed });
@@ -860,8 +1079,8 @@ function renderList(container) {
     const tasks = sectionTasks(sec);
     header.innerHTML = `<h3>${esc(sec)}</h3><span class="count">${tasks.length}</span>
       <span class="section-actions">
-        <button data-act="rename" title="重命名分组">✎</button>
-        <button data-act="delete" title="删除分组">🗑</button>
+        <button data-act="rename" title="${tr("section.rename")}">✎</button>
+        <button data-act="delete" title="${tr("section.delete")}">🗑</button>
       </span>`;
     header.querySelector('[data-act="rename"]').addEventListener("click", () => startSectionRename(sec, header.querySelector("h3")));
     header.querySelector('[data-act="delete"]').addEventListener("click", () => removeSection(sec));
@@ -881,7 +1100,7 @@ function renderList(container) {
     // add task: pop up the form dialog to fill all fields at once
     const addTaskBtn = document.createElement("button");
     addTaskBtn.className = "add-task-btn";
-    addTaskBtn.textContent = "＋ 添加任务";
+    addTaskBtn.textContent = tr("task.add");
     addTaskBtn.addEventListener("click", () => openTaskDialog({ section: sec }));
     secEl.appendChild(addTaskBtn);
     // dropping on blank area = move to end (row/header drops already stopPropagation)
@@ -923,7 +1142,7 @@ function makeListRow(task, sec) {
   handle.className = "drag-handle";
   handle.textContent = "⠿";
   handle.draggable = true;
-  handle.title = "拖拽排序 / 移动分组";
+  handle.title = tr("task.dragHandle");
   handle.addEventListener("dragstart", e => {
     e.dataTransfer.setData("text/task-id", task.id);
     e.dataTransfer.effectAllowed = "move";
@@ -972,7 +1191,7 @@ function makeListRow(task, sec) {
   const nameView = document.createElement("span");
   nameView.textContent = task.name;
   nameView.style.cursor = "pointer";
-  nameView.title = "点击打开详情";
+  nameView.title = tr("task.openDetail");
   nameView.addEventListener("click", e => {
     e.stopPropagation();
     if (!clickSuppressed()) openDetail(task.id);
@@ -981,22 +1200,22 @@ function makeListRow(task, sec) {
   row.appendChild(nameCell);
 
   // assignee
-  row.appendChild(makeCell(task, "assignee", { list: "dl-assignees", placeholder: "负责人" }));
+  row.appendChild(makeCell(task, "assignee", { list: "dl-assignees", placeholder: tr("field.assignee") }));
   // due date
   row.appendChild(makeCell(task, "due_on", { type: "date", cls: "cell-date" }));
   // Category / Effort / Priority (becomes select + custom after click)
   row.appendChild(makeCell(task, "category", { pill: true }));
-  row.appendChild(makeCell(task, "effort", { placeholder: "工作量" }));
+  row.appendChild(makeCell(task, "effort", { placeholder: tr("field.effort") }));
   row.appendChild(makeCell(task, "priority", { pri: true }));
 
   const del = document.createElement("button");
   del.className = "del-btn";
   del.textContent = "✕";
-  del.title = "删除任务";
+  del.title = tr("task.delete");
   del.addEventListener("click", e => {
     e.stopPropagation();
-    confirmDialog(`删除任务「${task.name}」？`, () => {
-      deleteTask(task.id).catch(err => showToast("删除失败: " + err.message, true));
+    confirmDialog(tr("confirm.deleteTask", { name: task.name }), () => {
+      deleteTask(task.id).catch(err => showToast(tr("toast.deleteFailed", { msg: err.message }), true));
     });
   });
   row.appendChild(del);
@@ -1044,7 +1263,7 @@ function makeCell(task, field, opts) {
     else if (opts.pri) view.innerHTML = priHtml(v);
     else view.innerHTML = v ? esc(v) : '<span class="pill-empty muted">—</span>';
     view.style.cursor = "pointer";
-    view.title = "点击编辑";
+    view.title = tr("cell.clickEdit");
     view.addEventListener("click", () => {
       // Category / Effort / Priority use select+custom (datalist unusable on iOS)
       if (field === "category" || field === "effort" || field === "priority") {
@@ -1084,8 +1303,8 @@ function renderBoard(container) {
     head.className = "board-col-header";
     head.innerHTML = `<h3>${esc(sec)}</h3><span class="count">${tasks.length}</span>
       <span class="section-actions" style="display:flex">
-        <button data-act="rename" title="重命名列">✎</button>
-        <button data-act="delete" title="删除列">🗑</button>
+        <button data-act="rename" title="${tr("column.rename")}">✎</button>
+        <button data-act="delete" title="${tr("column.delete")}">🗑</button>
       </span>`;
     head.querySelector('[data-act="rename"]').addEventListener("click", () => startSectionRename(sec, head.querySelector("h3")));
     head.querySelector('[data-act="delete"]').addEventListener("click", () => removeSection(sec));
@@ -1107,7 +1326,7 @@ function renderBoard(container) {
     // add task: pop up the form dialog (replaces inline input)
     const addTaskBtn = document.createElement("button");
     addTaskBtn.className = "add-task-btn";
-    addTaskBtn.textContent = "＋ 添加任务";
+    addTaskBtn.textContent = tr("task.add");
     addTaskBtn.addEventListener("click", () => openTaskDialog({ section: sec }));
     col.appendChild(addTaskBtn);
     board.appendChild(col);
@@ -1355,7 +1574,7 @@ function renderTimeline(container) {
   // compute the date range
   const dated = state.tasks.filter(t => t.start_on || t.due_on);
   if (!dated.length) {
-    wrap.innerHTML = '<div class="tl-empty-hint">没有带日期的任务。在任务详情中设置开始/截止日期后会显示在这里。</div>';
+    wrap.innerHTML = '<div class="tl-empty-hint">' + tr("tl.empty") + '</div>';
     container.appendChild(wrap);
     return;
   }
@@ -1391,7 +1610,7 @@ function renderTimeline(container) {
   header.style.height = TL.headerH + "px";
   const corner = document.createElement("div");
   corner.className = "tl-corner";
-  corner.textContent = "任务 / 日期";
+  corner.textContent = tr("tl.corner");
   header.appendChild(corner);
   const scale = document.createElement("div");
   scale.className = "tl-scale";
@@ -1410,7 +1629,7 @@ function renderTimeline(container) {
     const mEl = document.createElement("div");
     mEl.className = "tl-month";
     mEl.style.width = (mj - mi) * TL.dayW + "px";
-    mEl.textContent = `${d0.getFullYear()}年${d0.getMonth() + 1}月`;
+    mEl.textContent = monthLabel(d0.getFullYear(), d0.getMonth());
     monthsRow.appendChild(mEl);
     mi = mj;
   }
@@ -1481,7 +1700,7 @@ function renderTimeline(container) {
       }
       // tooltip shows real data only: show the range only when start exists, otherwise just the due date
       const sF = fmtDate(b.start), dF = fmtDate(b.due);
-      bar.title = t.name + "\n" + (t.start_on ? (sF === dF ? sF : `${sF} → ${dF}`) : `截止 ${dF}`);
+      bar.title = t.name + "\n" + (t.start_on ? (sF === dF ? sF : `${sF} → ${dF}`) : tr("tl.dueOnly", { date: dF }));
       positionBar(bar, b, xOf);
       bar.innerHTML = '<span class="tl-resize l"></span><span class="tl-resize r"></span>';
       // task name labels always sit outside the bar on the right (full dark text, not truncated);
@@ -1521,7 +1740,7 @@ function renderTimeline(container) {
   if (skipped > 0) {
     const hint = document.createElement("div");
     hint.className = "tl-empty-hint";
-    hint.textContent = `（${skipped} 个没有日期的任务未在时间线中显示）`;
+    hint.textContent = tr("tl.skipped", { n: skipped });
     hint.style.position = "sticky";
     hint.style.left = "0";
     inner.appendChild(hint);
@@ -1831,10 +2050,10 @@ function renderCalendar(container) {
   const head = document.createElement("div");
   head.id = "calendar-header";
   head.innerHTML = `
-    <button data-nav="-1">← 上月</button>
-    <button data-nav="today">今天</button>
-    <button data-nav="1">下月 →</button>
-    <h2>${state.calYear} 年 ${state.calMonth + 1} 月</h2>`;
+    <button data-nav="-1">${tr("cal.prev")}</button>
+    <button data-nav="today">${tr("cal.today")}</button>
+    <button data-nav="1">${tr("cal.next")}</button>
+    <h2>${monthLabel(state.calYear, state.calMonth)}</h2>`;
   head.querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
     const nav = b.dataset.nav;
     if (nav === "today") { const t = today(); state.calYear = t.getFullYear(); state.calMonth = t.getMonth(); }
@@ -1849,10 +2068,10 @@ function renderCalendar(container) {
 
   const grid = document.createElement("div");
   grid.className = "cal-grid";
-  for (const d of ["一", "二", "三", "四", "五", "六", "日"]) {
+  for (const d of weekdayLabels()) {
     const el = document.createElement("div");
     el.className = "cal-dow";
-    el.textContent = "周" + d;
+    el.textContent = d;
     grid.appendChild(el);
   }
 
@@ -1956,7 +2175,7 @@ function renderCalendar(container) {
     if (dayEntries.length > CAL_ITEM_LIMIT) {
       const more = document.createElement("div");
       more.className = "cal-more";
-      more.textContent = `+${dayEntries.length - CAL_ITEM_LIMIT} 更多`;
+      more.textContent = tr("cal.more", { n: dayEntries.length - CAL_ITEM_LIMIT });
       more.addEventListener("click", () => {
         dayEntries.slice(CAL_ITEM_LIMIT).forEach(en => cell.insertBefore(makeItem(en), more));
         more.remove();
@@ -2028,7 +2247,7 @@ function renderDetail() {
   titleRow.appendChild(nameInp);
   body.appendChild(titleRow);
 
-  body.appendChild(detailRow("分组", (() => {
+  body.appendChild(detailRow(tr("field.section"), (() => {
     const sel = document.createElement("select");
     for (const s of state.sections) {
       const o = document.createElement("option");
@@ -2040,14 +2259,14 @@ function renderDetail() {
     return sel;
   })()));
 
-  body.appendChild(detailRow("负责人", textInput(t.assignee, v => updateTask(t.id, { assignee: v }), { list: "dl-assignees" })));
+  body.appendChild(detailRow(tr("field.assignee"), textInput(t.assignee, v => updateTask(t.id, { assignee: v }), { list: "dl-assignees" })));
   // dates: iOS auto-fills today on the first tap of an empty date input; pre-fill on pointerdown to avoid "first tap commits and closes"
   const startInp = textInput(t.start_on || "", v => updateTask(t.id, { start_on: v || null }), { type: "date" });
   const dueInp = textInput(t.due_on || "", v => updateTask(t.id, { due_on: v || null }), { type: "date" });
   fixIOSDateInput(startInp);
   fixIOSDateInput(dueInp);
-  body.appendChild(detailRow("开始日期", startInp));
-  body.appendChild(detailRow("截止日期", dueInp));
+  body.appendChild(detailRow(tr("field.start"), startInp));
+  body.appendChild(detailRow(tr("field.due"), dueInp));
   // Category / Effort / Priority: select + custom (datalist unusable on iOS)
   body.appendChild(detailRow("Category", makeSelectOrCustom({ field: "category", value: t.category, onCommit: v => updateTask(t.id, { category: v }) })));
   body.appendChild(detailRow("Effort", makeSelectOrCustom({ field: "effort", value: t.effort, onCommit: v => updateTask(t.id, { effort: v }) })));
@@ -2068,21 +2287,21 @@ function renderDetail() {
       updateTask(t.id, { dependencies: [...deps] });
     });
     lab.appendChild(cb);
-    lab.appendChild(document.createTextNode(` ${other.name}（${other.section}）`));
+    lab.appendChild(document.createTextNode(" " + tr("deps.entry", { name: other.name, section: other.section })));
     depBox.appendChild(lab);
   }
-  body.appendChild(detailRow("前置依赖", depBox));
+  body.appendChild(detailRow(tr("field.deps"), depBox));
 
-  body.appendChild(detailRow("备注", textInput(t.notes, v => updateTask(t.id, { notes: v }), { textarea: true })));
+  body.appendChild(detailRow(tr("field.notes"), textInput(t.notes, v => updateTask(t.id, { notes: v }), { textarea: true })));
 
   const actions = document.createElement("div");
   actions.className = "detail-actions";
   const del = document.createElement("button");
   del.className = "btn-danger";
-  del.textContent = "删除任务";
+  del.textContent = tr("task.delete");
   del.addEventListener("click", () => {
-    confirmDialog(`删除任务「${t.name}」？`, () => {
-      deleteTask(t.id).catch(err => showToast("删除失败: " + err.message, true));
+    confirmDialog(tr("confirm.deleteTask", { name: t.name }), () => {
+      deleteTask(t.id).catch(err => showToast(tr("toast.deleteFailed", { msg: err.message }), true));
     });
   });
   actions.appendChild(del);
@@ -2092,7 +2311,7 @@ function renderDetail() {
     a.href = t.link;
     a.target = "_blank";
     a.rel = "noopener";
-    a.textContent = "在 Asana 中打开 ↗";
+    a.textContent = tr("task.openInAsana");
     actions.appendChild(a);
   }
   body.appendChild(actions);
@@ -2123,18 +2342,22 @@ function init() {
     state.view = b.dataset.view;
     render();
   }));
+  // language switcher (sidebar bottom): switch + initial translation of static strings
+  $$("#lang-switch button").forEach(b => b.addEventListener("click", () => setLang(b.dataset.lang)));
+  applyI18n();
+  updateLangSwitch();
   // the "＋ 分组" button becomes an inline creator (replaces prompt)
   $("#btn-new-section").replaceWith(makeInlineCreator({
-    buttonLabel: "＋ 分组",
+    buttonLabelKey: "btn.newSection",
     buttonClass: "creator-btn-bordered",
-    placeholder: "新分组名称",
+    placeholderKey: "section.namePh",
     onSubmit: name => addSection(name),
   }));
   // sidebar "＋ 新建项目" inline creator
   projectCreatorEl = makeInlineCreator({
-    buttonLabel: "＋ 新建项目",
+    buttonLabelKey: "btn.newProject",
     buttonClass: "creator-btn-sidebar",
-    placeholder: "新项目名称",
+    placeholderKey: "project.namePh",
     onSubmit: name => createProject(name),
   });
   $("#btn-new-project").replaceWith(projectCreatorEl);
@@ -2173,7 +2396,7 @@ function init() {
       hideLogin();
       render();
     } catch (err) {
-      showLogin(err.message === "unauthorized" ? "token 不正确，请重试" : "加载失败: " + err.message);
+      showLogin(err.message === "unauthorized" ? tr("login.badToken") : tr("app.loadFailed", { msg: err.message }));
     }
   });
 
@@ -2181,14 +2404,14 @@ function init() {
     // no token: try unauthenticated access first (--no-auth mode lets you straight in); show the login overlay on 401
     boot().then(render).catch(e => {
       if (e.message !== "unauthorized") {
-        $("#view-container").innerHTML = `<div class="tl-empty-hint">加载失败: ${esc(e.message)}</div>`;
+        $("#view-container").innerHTML = `<div class="tl-empty-hint">${esc(tr("app.loadFailed", { msg: e.message }))}</div>`;
       }
     });
     return;
   }
   boot().then(render).catch(e => {
     if (e.message !== "unauthorized") {
-      $("#view-container").innerHTML = `<div class="tl-empty-hint">加载失败: ${esc(e.message)}</div>`;
+      $("#view-container").innerHTML = `<div class="tl-empty-hint">${esc(tr("app.loadFailed", { msg: e.message }))}</div>`;
     }
   });
 }

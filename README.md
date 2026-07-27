@@ -14,8 +14,7 @@ A self-hosted, single-machine mini Asana — a personal project / home-improveme
 - **Mobile support**: responsive layout, touch long-press dragging, bottom-sheet detail panel
 - **Task detail panel**: section, assignee, start/due dates, Category/Effort/Priority, multi-select dependencies, notes, link
 - **Token access auth** (on by default, can be disabled) for public-exposure scenarios
-
-Note: the app UI is currently in Chinese.
+- **Bilingual UI (中文 / English)**: language switcher at the bottom of the sidebar; remembers your choice (localStorage) and defaults to your browser language; dates and the login page are localized too
 
 ## Quick start
 
@@ -37,6 +36,7 @@ Open `http://127.0.0.1:8787` in your browser.
 - Programmatic access carries the token in one of two ways:
   - `Authorization: Bearer <token>` request header
   - `?token=<token>` query parameter
+- After `?token=` page auth, the served `index.html` has its `/app.js` and `/style.css` links automatically rewritten to carry the token plus a `&v=` version fingerprint (file mtime), so those asset requests pass auth and updated files bypass stale caches.
 - Without a token: API requests get `401 {"error":"unauthorized"}`; page requests get the login page.
 - **Disable auth** (local development only): `python3 server.py --no-auth`, or env var `MINI_ASANA_NO_AUTH=1`.
 - **Change port**: `python3 server.py --port 9000`, or env var `MINI_ASANA_PORT=9000` (default 8787).
@@ -146,6 +146,8 @@ cloudflared tunnel route dns <tunnel-name> <your-domain>
 ```
 
 When exposing publicly, **keep auth enabled** (the default); the token is in `data/auth_token.txt`.
+
+Note on caching: the app sends `Cache-Control: no-store` on every response, so Cloudflare's edge will not cache the login page, authenticated pages, or static assets — no extra cache rules are needed, and no cache purge is required after deploying updates.
 
 ### Daily backup and tunnel watchdog
 

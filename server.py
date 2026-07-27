@@ -104,29 +104,55 @@ LOGIN_HTML = """<!DOCTYPE html>
 <body>
   <div class="card">
     <div class="logo">◆ mini-asana</div>
-    <p class="tip">Home improvement tracker · 请输入访问 token</p>
+    <p class="tip" id="tip">Home improvement tracker · 请输入访问 token</p>
     <form id="lf">
       <input type="password" id="tok" placeholder="访问 token" autocomplete="off" autofocus>
-      <button type="submit">进入</button>
+      <button type="submit" id="enter">进入</button>
     </form>
     <p class="err" id="err"></p>
   </div>
 <script>
 (function () {
   var KEY = "mini_asana_token";
+  // auto-detect UI language (no server-side negotiation): zh* stays Chinese, others get English
+  var EN = !/^zh/i.test(navigator.language || "");
+  var S = EN ? {
+    title: "Log in - mini-asana",
+    tip: "Home improvement tracker · Enter access token",
+    ph: "Access token",
+    enter: "Enter",
+    badToken: "Incorrect token, please try again",
+    netErr: "Network error, please try again",
+    srvErr: "Server error ",
+    expired: "Saved token has expired, please enter again"
+  } : {
+    title: "登录 - mini-asana",
+    tip: "Home improvement tracker · 请输入访问 token",
+    ph: "访问 token",
+    enter: "进入",
+    badToken: "token 不正确，请重试",
+    netErr: "网络错误，请重试",
+    srvErr: "服务器错误 ",
+    expired: "已保存的 token 已失效，请重新输入"
+  };
+  document.title = S.title;
+  document.documentElement.lang = EN ? "en" : "zh-CN";
+  document.getElementById("tip").textContent = S.tip;
+  document.getElementById("tok").placeholder = S.ph;
+  document.getElementById("enter").textContent = S.enter;
   function go(t) { location.replace("/?token=" + encodeURIComponent(t)); }
   function err(m) { document.getElementById("err").textContent = m; }
   function valid(t, ok, bad) {
     fetch("/api/tasks", { headers: { "Authorization": "Bearer " + t } })
-      .then(function (r) { if (r.ok) ok(); else if (r.status === 401) bad(); else err("服务器错误 " + r.status); })
-      .catch(function () { err("网络错误，请重试"); });
+      .then(function (r) { if (r.ok) ok(); else if (r.status === 401) bad(); else err(S.srvErr + r.status); })
+      .catch(function () { err(S.netErr); });
   }
   var saved = "";
   try { saved = localStorage.getItem(KEY) || ""; } catch (e) {}
   if (saved) {
     valid(saved, function () { go(saved); }, function () {
       try { localStorage.removeItem(KEY); } catch (e) {}
-      err("已保存的 token 已失效，请重新输入");
+      err(S.expired);
     });
   }
   document.getElementById("lf").addEventListener("submit", function (e) {
@@ -136,7 +162,7 @@ LOGIN_HTML = """<!DOCTYPE html>
     valid(t, function () {
       try { localStorage.setItem(KEY, t); } catch (e) {}
       go(t);
-    }, function () { err("token 不正确，请重试"); });
+    }, function () { err(S.badToken); });
   });
 })();
 </script>
@@ -303,6 +329,14 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     # ---------- helpers ----------
+    def send_response(self, code, message=None):
+        # Authenticated single-user app served through a CDN/edge tunnel: NOTHING may
+        # ever be edge- or browser-cached (a cached login page or stale app.js would
+        # be served to everyone). Central override so every response — static files,
+        # API JSON, the login page, and errors — carries no-store.
+        super().send_response(code, message)
+        self.send_header("Cache-Control", "no-store")
+
     def _send_json(self, obj, status=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
@@ -665,6 +699,14 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"ok": True})
 
     # ---------- static ----------
+    @staticmethod
+    def _asset_version(name):
+        """mtime-based cache-buster for static assets (0 when the file is missing)"""
+        try:
+            return int(os.path.getmtime(os.path.join(STATIC_DIR, name)))
+        except OSError:
+            return 0
+
     def _serve_static(self, path):
         if path == "/":
             path = "/index.html"
@@ -687,9 +729,12 @@ class Handler(BaseHTTPRequestHandler):
             qs = parse_qs(urlparse(self.path).query)
             qt = (qs.get("token") or [None])[0]
             if qt and AUTH_TOKEN and hmac.compare_digest(qt.strip(), AUTH_TOKEN):
-                suffix = ("?token=" + qt.strip()).encode("utf-8")
-                data = data.replace(b'src="/app.js"', b'src="/app.js' + suffix + b'"')
-                data = data.replace(b'href="/style.css"', b'href="/style.css' + suffix + b'"')
+                tok = qt.strip()
+                # append each asset's mtime as &v= cache-buster so deploys bypass stale caches
+                for name, ref in (("app.js", "src"), ("style.css", "href")):
+                    suffix = f'?token={tok}&v={self._asset_version(name)}'
+                    data = data.replace(f'{ref}="/{name}"'.encode("utf-8"),
+                                        f'{ref}="/{name}{suffix}"'.encode("utf-8"))
         self.send_response(200)
         self.send_header("Content-Type", ctype + ("; charset=utf-8" if ctype.startswith("text/") or ctype == "application/javascript" else ""))
         self.send_header("Content-Length", str(len(data)))
