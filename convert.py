@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""把 Asana 导出的 asana_tasks_full.json（中文键）转换为应用内部格式 data/tasks.json。
+"""Convert Asana-exported asana_tasks_full.json (Chinese keys) into the app's internal format data/tasks.json.
 
-内部格式:
+Internal format:
 {
   "sections": ["To do", "In progress", ...],
   "tasks": [
     {
-      "id": str,            # 来自 gid
+      "id": str,            # from gid
       "name": str,
       "section": str,
       "assignee": str,
@@ -16,10 +16,10 @@
       "category": str,
       "effort": str,
       "priority": str,
-      "dependencies": [task_id, ...],   # 由任务名解析为 id
+      "dependencies": [task_id, ...],   # resolved from task names to ids
       "notes": str,
       "link": str,
-      "order": int                     # section 内排序
+      "order": int                     # order within the section
     }
   ]
 }

@@ -17,7 +17,7 @@ input, textarea, select { font-family: inherit; font-size: 13px; }
 
 #app { display: flex; height: 100vh; overflow: hidden; }
 
-/* ---------- 左侧边栏 ---------- */
+/* ---------- left sidebar ---------- */
 #sidebar {
   width: 220px; min-width: 220px; background: var(--sidebar-bg);
   border-right: 1px solid var(--border); padding: 16px 12px; overflow-y: auto;
@@ -28,7 +28,7 @@ input, textarea, select { font-family: inherit; font-size: 13px; }
 .nav-item:hover { background: var(--hover); }
 .nav-item.active { background: #eceae9; font-weight: 600; }
 .project-item { font-size: 13px; }
-/* ---------- 侧边栏项目列表（多项目） ---------- */
+/* ---------- sidebar project list (multi-project) ---------- */
 #project-list { display: flex; flex-direction: column; gap: 2px; }
 .project-item { display: flex; align-items: center; gap: 4px; }
 .project-item .project-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -45,7 +45,7 @@ input, textarea, select { font-family: inherit; font-size: 13px; }
 #btn-menu-close { display: none; background: none; border: none; font-size: 16px; color: var(--text-dim); float: right; padding: 4px 8px; }
 #sidebar-backdrop.hidden { display: none; }
 
-/* ---------- 主区域 ---------- */
+/* ---------- main area ---------- */
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 #topbar {
   display: flex; align-items: baseline; gap: 16px;
@@ -70,7 +70,7 @@ input, textarea, select { font-family: inherit; font-size: 13px; }
 
 #view-container { flex: 1; overflow: auto; padding: 12px 24px 40px; }
 
-/* ---------- 通用 ---------- */
+/* ---------- shared ---------- */
 .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; color: #fff; white-space: nowrap; }
 .pill-empty { color: #b0b1b2; background: none; }
 .task-done .task-name, .task-done .cell { text-decoration: line-through; color: #b0b1b2 !important; }
@@ -91,7 +91,7 @@ input[type="date"].inline-input { font-family: inherit; }
 }
 .checkbox.done { background: #5da283; border-color: #5da283; }
 
-/* ---------- 列表视图 ---------- */
+/* ---------- list view ---------- */
 .list-section { margin-bottom: 8px; }
 .list-section-header {
   display: flex; align-items: center; gap: 8px; padding: 14px 0 6px;
@@ -123,7 +123,7 @@ input[type="date"].inline-input { font-family: inherit; }
 }
 .add-task-btn:hover { color: var(--accent); }
 
-/* ---------- 看板视图 ---------- */
+/* ---------- board view ---------- */
 #board { display: flex; gap: 14px; align-items: flex-start; height: 100%; overflow-x: auto; padding-bottom: 10px; }
 .board-col {
   width: 280px; min-width: 280px; background: #f7f6f5; border-radius: 8px; padding: 10px;
@@ -152,7 +152,7 @@ input[type="date"].inline-input { font-family: inherit; }
 .board-card .card-check { float: left; margin-right: 8px; margin-top: 2px; }
 .board-col .add-task-btn { padding: 8px 4px 2px; }
 
-/* ---------- 时间线视图 ---------- */
+/* ---------- timeline view ---------- */
 #timeline { position: relative; overflow: auto; height: 100%; border: 1px solid var(--border); border-radius: 8px; }
 .tl-inner { position: relative; }
 .tl-header { display: flex; position: sticky; top: 0; z-index: 5; background: #fff; border-bottom: 1px solid var(--border); }
@@ -160,7 +160,7 @@ input[type="date"].inline-input { font-family: inherit; }
   width: var(--name-w, 220px); min-width: var(--name-w, 220px); position: sticky; left: 0; z-index: 6; background: #fff;
   border-right: 1px solid var(--border); padding: 8px 12px; font-size: 12px; color: var(--text-dim);
 }
-/* 表头刻度：上排月份、下排日号（每天一列，宽 = --day-w） */
+/* header scale: months on the top row, day numbers below (one column per day, width = --day-w) */
 .tl-scale { display: flex; flex-direction: column; }
 .tl-months { display: flex; height: 15px; border-bottom: 1px solid #f0efee; }
 .tl-month {
@@ -182,8 +182,8 @@ input[type="date"].inline-input { font-family: inherit; }
 }
 .tl-row.tl-section-row .tl-name { font-weight: 700; font-size: 12px; background: #faf9f9; }
 .tl-name:hover { color: var(--accent); }
-/* 网格渐变（rangeStart 对齐周一，周期 7×day-w）：
-   第1层=每周一稍深的竖线，第2层=每天浅色竖线，第3层=周末淡底色 */
+/* grid gradients (rangeStart aligned to Monday, period 7×day-w):
+   layer 1 = slightly darker vertical line on Mondays, layer 2 = light vertical line per day, layer 3 = faint weekend shading */
 .tl-track {
   position: relative; flex: 1;
   background-image:
@@ -209,16 +209,16 @@ input[type="date"].inline-input { font-family: inherit; }
 .tl-bar .tl-resize.l { left: -2px; }
 .tl-bar .tl-resize.r { right: -2px; }
 .tl-bar.dragging, .tl-bar.resizing { opacity: 0.75; z-index: 4; }
-/* 多选选中态：深色描边 + 光晕 */
+/* multi-select selected state: dark outline + glow */
 .tl-bar.tl-bar-selected { outline: 2px solid #2f4a8f; box-shadow: 0 0 0 3px rgba(69, 115, 210, 0.35); z-index: 4; }
-/* 横条任务名标签：一律在色块内部，深色文字在浅蓝/浅绿底色上保证可读 */
+/* bar task-name label: always inside the block; dark text stays readable on the light blue/green background */
 .tl-bar-label {
   position: absolute; left: 7px; right: 5px; top: 0; height: 18px; line-height: 18px;
   font-size: 11px; color: #1f2d4d; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; pointer-events: none;
 }
 .tl-bar.done .tl-bar-label { color: #5a6b60; text-decoration: line-through; }
-/* 窄条标签放色块外：默认右侧 7px（深色完整显示，不截断）；贴近右缘改左侧右对齐 */
+/* narrow-bar label outside the block: right side +7px by default (full dark text, not truncated); switch to right-aligned left side near the right edge */
 .tl-bar-label.out-r, .tl-bar-label.out-l {
   overflow: visible; text-overflow: clip; color: var(--text);
 }
@@ -228,12 +228,12 @@ input[type="date"].inline-input { font-family: inherit; }
 #tl-svg { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 1; }
 .tl-empty-hint { padding: 20px; color: var(--text-dim); }
 
-/* ---------- 日历视图 ---------- */
+/* ---------- calendar view ---------- */
 #calendar-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
 #calendar-header h2 { font-size: 16px; min-width: 130px; }
 #calendar-header button { border: 1px solid var(--border); background: #fff; border-radius: 6px; padding: 4px 10px; }
 #calendar-header button:hover { background: var(--hover); }
-/* minmax(0, 1fr)：7 列严格等宽，不允许内容的 min-content（如 nowrap 任务名）撑宽某列 */
+/* minmax(0, 1fr): 7 strictly equal columns; content min-content (e.g. nowrap task names) must not widen a column */
 .cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-top: 1px solid var(--border); border-left: 1px solid var(--border); }
 .cal-dow {
   border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
@@ -243,8 +243,8 @@ input[type="date"].inline-input { font-family: inherit; }
 .cal-cell {
   min-height: 110px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
   padding: 4px; vertical-align: top; background: #fff;
-  /* 不设 overflow:hidden：跨天横条段要伸出 1px 覆盖格缝边框，与下一格的段相接；
-     单列宽靠 min-width:0 约束，长任务名由 .cal-item 自己 ellipsis */
+  /* no overflow:hidden: multi-day bar segments stick out 1px to cover the gap border and join the next cell's segment;
+     column width is constrained by min-width:0; long task names are ellipsized by .cal-item itself */
   min-width: 0;
 }
 .cal-cell.other-month { background: #fafafa; }
@@ -259,37 +259,37 @@ input[type="date"].inline-input { font-family: inherit; }
 }
 .cal-item:hover { background: #dfe9fa; }
 .cal-item.task-done { background: #f3f3f3; border-left-color: #bbb; }
-/* Category 着色：实心主题色 + 白字（与看板 .pill 风格一致）；颜色由 JS 内联 background 提供 */
+/* Category coloring: solid theme color + white text (consistent with board .pill); color supplied via JS inline background */
 .cal-item.cal-cat { border-left-color: transparent; color: #fff; }
 .cal-item.cal-cat:hover { filter: brightness(0.92); }
-/* 已完成的着色条目：保留色相但整体淡出，维持置灰感 */
+/* completed colored entries: keep the hue but fade overall, preserving the greyed-out feel */
 .cal-item.cal-cat.task-done { opacity: 0.55; }
 .cal-more { font-size: 10px; color: var(--text-dim); padding: 1px 4px; cursor: pointer; }
-/* 跨天任务横条：每天格内一段，相邻段相接处去圆角 + 负 margin 桥接格缝（4px padding + 1px 边框） */
+/* multi-day task bars: one segment per day cell; adjoining ends lose rounding and bridge the gap with negative margins (4px padding + 1px border) */
 .cal-item.cal-span.ext-l {
   margin-left: -4px; border-top-left-radius: 0; border-bottom-left-radius: 0;
-  border-left-color: transparent; /* 保留 3px 宽度布局不变，只隐藏接缝竖线 */
+  border-left-color: transparent; /* keep the 3px width layout unchanged, only hide the seam line */
 }
 .cal-item.cal-span.ext-r {
   margin-right: -5px; border-top-right-radius: 0; border-bottom-right-radius: 0;
 }
 
-/* ---------- 触屏拖拽通用 ---------- */
+/* ---------- shared touch dragging ---------- */
 .touch-ghost {
   position: fixed; pointer-events: none; z-index: 90; opacity: 0.9;
   background: #fff; box-shadow: 0 8px 20px rgba(0,0,0,0.2); border-radius: 8px;
 }
 .touch-dragging { opacity: 0.35 !important; }
-/* 长按成功、尚未真拖时的反馈描边（列表手柄/看板卡片/日历条目通用） */
+/* feedback outline after a successful long-press, before the real drag starts (shared by list handle / board card / calendar item) */
 .touch-armed { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 8px; }
-/* 时间线横条长按激活反馈 */
+/* timeline bar long-press activation feedback */
 .tl-bar.tl-bar-armed { outline: 2px solid var(--accent); transform: scale(1.04); z-index: 5; }
-/* 粗指针（手机）加宽时间线边缘 resize 手柄，好按一些 */
+/* widen timeline edge resize handles on coarse pointers (phones) for easier tapping */
 @media (pointer: coarse) {
   .tl-bar .tl-resize { width: 12px; }
 }
 
-/* ---------- 详情面板 ---------- */
+/* ---------- detail panel ---------- */
 #detail-panel {
   width: 360px; min-width: 360px; border-left: 1px solid var(--border); background: #fff;
   overflow-y: auto; padding: 16px 20px; box-shadow: -4px 0 12px rgba(0,0,0,0.05);
@@ -316,12 +316,12 @@ input[type="date"].inline-input { font-family: inherit; }
 .detail-link { font-size: 12px; color: var(--accent); text-decoration: none; }
 .detail-link:hover { text-decoration: underline; }
 
-/* 优先级颜色 */
+/* priority colors */
 .pri-高 { color: #d45b4d; font-weight: 600; }
 .pri-中 { color: #e8a33d; font-weight: 600; }
 .pri-低 { color: #4573d2; font-weight: 600; }
 
-/* ---------- 登录 / 退出 ---------- */
+/* ---------- login / logout ---------- */
 #btn-logout {
   margin-left: auto; background: none; border: 1px solid var(--border); border-radius: 6px;
   padding: 4px 10px; color: var(--text-dim); font-size: 12px;
@@ -352,12 +352,12 @@ input[type="date"].inline-input { font-family: inherit; }
 .login-card button:hover { background: #3a63b8; }
 .login-error { color: #d45b4d; font-size: 12px; min-height: 16px; margin-top: 10px; }
 
-/* ================= 移动端适配（≤768px） ================= */
+/* ================= mobile adaptation (≤768px) ================= */
 @media (max-width: 768px) {
-  /* 避免 iOS 聚焦自动放大 */
+  /* avoid iOS auto-zoom on focus */
   input, textarea, select { font-size: 16px; }
 
-  /* ----- 框架：侧栏变抽屉 ----- */
+  /* ----- frame: sidebar becomes a drawer ----- */
   #btn-menu { display: inline-block; }
   #btn-menu-close { display: inline-block; }
   #sidebar {
@@ -368,7 +368,7 @@ input[type="date"].inline-input { font-family: inherit; }
   #sidebar.open { transform: translateX(0); }
   #sidebar-backdrop { position: fixed; inset: 0; z-index: 65; background: rgba(0,0,0,0.3); }
 
-  /* ----- 顶栏压缩 ----- */
+  /* ----- compact topbar ----- */
   #topbar { padding: 10px 12px 8px; gap: 8px; align-items: center; }
   #project-title { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   #stats { font-size: 11px; white-space: nowrap; }
@@ -378,7 +378,7 @@ input[type="date"].inline-input { font-family: inherit; }
   #btn-new-section { flex: none; }
   #view-container { padding: 8px 10px 48px; }
 
-  /* ----- 详情面板：底部升起的全屏 sheet ----- */
+  /* ----- detail panel: full-screen sheet rising from the bottom ----- */
   #detail-panel {
     position: fixed; left: 0; right: 0; bottom: 0; top: 4vh; z-index: 80;
     width: auto; min-width: 0; border-left: none; border-radius: 16px 16px 0 0;
@@ -386,10 +386,10 @@ input[type="date"].inline-input { font-family: inherit; }
   }
   #detail-close { font-size: 20px; padding: 8px 12px; }
 
-  /* ----- 登录卡片 ----- */
+  /* ----- login card ----- */
   .login-card { width: 88vw; max-width: 340px; padding: 28px 22px; }
 
-  /* ----- 列表：两行式卡片 ----- */
+  /* ----- list: two-line cards ----- */
   .list-row { flex-wrap: wrap; align-items: center; padding: 8px 6px; gap: 6px; }
   .list-row .drag-handle { order: 0; padding: 8px 6px; font-size: 15px; }
   .list-row .checkbox { order: 1; }
@@ -405,31 +405,31 @@ input[type="date"].inline-input { font-family: inherit; }
   .section-actions button { padding: 6px 8px; }
   .add-task-btn { padding: 12px 6px; font-size: 14px; }
 
-  /* ----- 看板：82vw 列 + 逐列吸附 ----- */
+  /* ----- board: 82vw columns + per-column snap ----- */
   #board { scroll-snap-type: x mandatory; gap: 10px; -webkit-overflow-scrolling: touch; }
   .board-col { width: 82vw; min-width: 82vw; scroll-snap-align: start; max-height: calc(100vh - 150px); }
   .board-card { padding: 10px; }
 
-  /* ----- 时间线：列宽与 sticky 列由 JS 通过 --day-w/--name-w 下发（20px/110px） ----- */
+  /* ----- timeline: column widths and sticky column are set by JS via --day-w/--name-w (20px/110px) ----- */
   .tl-name, .tl-corner { font-size: 11px; padding: 7px 6px; }
   .tl-bar-label { font-size: 10px; left: 5px; }
 
-  /* ----- 日历：紧凑格子 ----- */
+  /* ----- calendar: compact cells ----- */
   #calendar-header button { padding: 10px 16px; font-size: 14px; }
   #calendar-header h2 { font-size: 14px; min-width: 100px; }
   .cal-cell { min-height: 64px; padding: 2px; }
   .cal-day-num { width: 18px; height: 18px; font-size: 10px; margin-bottom: 2px; }
   .cal-item { font-size: 10px; padding: 2px 4px; margin-bottom: 2px; }
-  /* 移动端格缝 = 2px padding + 1px 边框 */
+  /* mobile cell gap = 2px padding + 1px border */
   .cal-item.cal-span.ext-l { margin-left: -2px; }
   .cal-item.cal-span.ext-r { margin-right: -3px; }
 
-  /* ----- 点击目标 ≥36px ----- */
+  /* ----- tap targets ≥36px ----- */
   .checkbox { width: 22px; height: 22px; }
   .cal-item { min-height: 20px; }
 }
 
-/* ---------- 内联创建器 / toast / 确认对话框（替代原生 prompt/alert/confirm） ---------- */
+/* ---------- inline creator / toast / confirm dialog (replacing native prompt/alert/confirm) ---------- */
 .inline-creator-form { display: flex; gap: 6px; align-items: center; padding: 4px 0; }
 .inline-creator-form .inline-input {
   flex: 1; min-width: 0; border: 1px solid var(--border); background: #fff;
@@ -441,7 +441,7 @@ input[type="date"].inline-input { font-family: inherit; }
   background: var(--accent); color: #fff; font-size: 15px; line-height: 1;
 }
 .inline-creator-ok:disabled { opacity: 0.5; }
-/* 顶栏「＋ 分组」使用创建器时的布局 */
+/* layout when the topbar "＋ 分组" button uses the creator */
 #tabs > .inline-creator { margin-left: auto; margin-bottom: 4px; flex: none; }
 #tabs > .inline-creator .inline-creator-form { padding: 0; }
 #tabs > .inline-creator .inline-input { width: 150px; }
@@ -450,7 +450,7 @@ input[type="date"].inline-input { font-family: inherit; }
   padding: 4px 10px !important; color: var(--text-dim); font-size: 13px;
 }
 .creator-btn-bordered:hover { background: var(--hover); color: var(--text); }
-/* 分组标题内的重命名输入 */
+/* rename input inside section titles */
 .list-section-header .inline-creator-form, .board-col-header .inline-creator-form { padding: 0; }
 .list-section-header .inline-creator-form .inline-input,
 .board-col-header .inline-creator-form .inline-input { width: 150px; font-weight: 700; }
@@ -479,7 +479,7 @@ input[type="date"].inline-input { font-family: inherit; }
 .confirm-btns .btn-cancel { background: none; border-color: var(--border); color: var(--text-dim); }
 .confirm-btns .btn-cancel:hover { background: var(--hover); color: var(--text); }
 
-/* ---------- 新建任务对话框 ---------- */
+/* ---------- new-task dialog ---------- */
 .task-dialog-overlay {
   position: fixed; inset: 0; z-index: 160; background: rgba(0,0,0,0.3);
   display: flex; align-items: center; justify-content: center;
@@ -511,7 +511,7 @@ input[type="date"].inline-input { font-family: inherit; }
 .td-submit:hover:not(:disabled) { background: #3a63b8; }
 .td-submit:disabled { opacity: 0.5; cursor: default; }
 
-/* 时间线拖选日期范围 */
+/* timeline drag-select date range */
 .tl-range-sel {
   position: absolute; top: 4px; bottom: 4px; pointer-events: none; z-index: 3;
   background: rgba(69,115,210,0.15); border: 1px dashed var(--accent); border-radius: 4px;
@@ -519,7 +519,7 @@ input[type="date"].inline-input { font-family: inherit; }
 .tl-today { pointer-events: none; }
 
 @media (max-width: 768px) {
-  /* 移动端：对话框底部升起全屏 sheet，输入 ≥16px 防 iOS 缩放 */
+  /* mobile: dialog becomes a full-screen sheet rising from the bottom; inputs ≥16px prevent iOS zoom */
   .task-dialog-overlay { align-items: flex-end; }
   .task-dialog {
     width: 100%; max-width: none; border-radius: 16px 16px 0 0; max-height: 92vh;
@@ -529,7 +529,7 @@ input[type="date"].inline-input { font-family: inherit; }
   .td-close { font-size: 20px; padding: 8px 12px; }
 }
 
-/* ---------- 字段 select + 自定义（替代 datalist，iOS 可用） ---------- */
+/* ---------- field select + custom (replaces datalist, works on iOS) ---------- */
 .sel-custom { display: block; }
 .sel-custom select {
   width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 6px;
@@ -541,7 +541,7 @@ input[type="date"].inline-input { font-family: inherit; }
   padding: 8px 10px; font-size: 14px; margin-top: 6px;
 }
 .sel-custom-input:focus { border-color: var(--accent); outline: none; }
-/* 列表单元格内的紧凑形态 */
+/* compact form inside list cells */
 .list-row .cell .sel-custom select, .list-row .cell .sel-custom-input {
   width: auto; min-width: 96px; padding: 3px 6px; font-size: 13px; margin-top: 0;
 }

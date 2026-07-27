@@ -1,44 +1,47 @@
 #!/usr/bin/env python3
-"""mini-asana: 本地单机版简易 Asana（多项目版）。
+"""mini-asana: a local single-machine mini Asana (multi-project version).
 
-仅使用 Python 标准库。监听 127.0.0.1:8787。
+Uses only the Python standard library. Listens on 127.0.0.1:8787.
 
-REST API（项目）:
+REST API (projects):
   GET    /api/projects              -> {"projects": [{"id","name","task_count"}, ...]}
-  POST   /api/projects              新建项目 {"name": str}
-  GET    /api/projects/<pid>        项目详情
-  PATCH  /api/projects/<pid>        重命名项目 {"name": str}
-  DELETE /api/projects/<pid>        删除项目（最后一个项目不可删）
+  POST   /api/projects              create project {"name": str}
+  GET    /api/projects/<pid>        project detail
+  PATCH  /api/projects/<pid>        rename project {"name": str}
+  DELETE /api/projects/<pid>        delete project (the last remaining project cannot be deleted)
 
-REST API（项目作用域内的任务/分组；<pid> 为项目 id）:
+REST API (tasks/sections within a project scope; <pid> is the project id):
   GET    /api/projects/<pid>/tasks            -> {"project","sections","tasks"}
-  POST   /api/projects/<pid>/tasks            创建任务 (JSON body)
-  PUT    /api/projects/<pid>/tasks/<id>       更新任务字段 (部分更新)
-  DELETE /api/projects/<pid>/tasks/<id>       删除任务
-  POST   /api/projects/<pid>/sections         新增 section {"name": str}
-  PUT    /api/projects/<pid>/sections/<name>  重命名 section {"name": new_name}
-  DELETE /api/projects/<pid>/sections/<name>  删除 section (其任务移到第一个剩余 section)
-  POST   /api/projects/<pid>/reorder          {"section": str, "ids": [task_id, ...]} 重排 section 内顺序
+  POST   /api/projects/<pid>/tasks            create task (JSON body)
+  PUT    /api/projects/<pid>/tasks/<id>       update task fields (partial update)
+  DELETE /api/projects/<pid>/tasks/<id>       delete task
+  POST   /api/projects/<pid>/sections         add section {"name": str}
+  PUT    /api/projects/<pid>/sections/<name>  rename section {"name": new_name}
+  DELETE /api/projects/<pid>/sections/<name>  delete section (its tasks move to the first remaining section)
+  POST   /api/projects/<pid>/reorder          {"section": str, "ids": [task_id, ...]} reorder within a section
 
-兼容旧版单项目路径（/api/tasks、/api/sections、/api/reorder 等），
-自动作用于 index 中的第一个项目（最老项目）。
+Legacy single-project paths (/api/tasks, /api/sections, /api/reorder, etc.)
+are still supported and apply to the first (oldest) project in the index.
 
-数据布局:
-  data/projects.json        项目索引 {"projects": [{"id","name"}, ...]}，数组顺序即项目顺序
-  data/projects/<pid>.json  每个项目一个文件 {"project","sections","tasks"}（原子写入）
-  启动时若只有旧版 data/tasks.json，会自动迁移为第一个项目，
-  旧文件改名 data/tasks.json.migrated；全新安装则自动创建默认项目。
+Data layout:
+  data/projects.json        project index {"projects": [{"id","name"}, ...]}; array order = project order
+  data/projects/<pid>.json  one file per project {"project","sections","tasks"} (atomic writes)
+  On startup, if only a legacy data/tasks.json exists it is auto-migrated into the
+  first project and the old file is renamed data/tasks.json.migrated; a fresh
+  install auto-creates a default project.
 
-静态文件: / -> static/index.html, /static/* -> static/*
+Static files: / -> static/index.html, /static/* -> static/*
 
-认证（为公网部署准备的简单 token 认证，默认开启）:
-  - 首次启动自动生成 32 位十六进制 token 写入 data/auth_token.txt（权限 600），
-    已存在则直接读取。
-  - 除登录页外所有请求（含 /、/app.js、/style.css、/api/*）都需有效 token，
-    接受两种方式: "Authorization: Bearer <token>" 请求头 或 ?token=<token> query 参数。
-  - API 请求无 token 返回 401 {"error":"unauthorized"}；页面请求返回登录页 HTML。
-  - 本地开发可用 --no-auth 参数或环境变量 MINI_ASANA_NO_AUTH=1 关闭认证。
-  - 端口可用 --port 或环境变量 MINI_ASANA_PORT 覆盖（默认 8787）。
+Auth (simple token auth for public exposure, enabled by default):
+  - On first start, a 32-char hex token is generated into data/auth_token.txt
+    (mode 600); existing files are read as-is.
+  - All requests except the login page (including /, /app.js, /style.css, /api/*)
+    require a valid token, accepted two ways: "Authorization: Bearer <token>"
+    header or ?token=<token> query param.
+  - API requests without a token get 401 {"error":"unauthorized"}; page requests
+    get the login page HTML.
+  - For local dev, auth can be disabled with --no-auth or MINI_ASANA_NO_AUTH=1.
+  - Port can be overridden with --port or MINI_ASANA_PORT (default 8787).
 """
 import argparse
 import hmac
@@ -55,7 +58,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE, "data")
-DATA_FILE = os.path.join(DATA_DIR, "tasks.json")  # 旧版单项目数据文件，仅用于启动时迁移
+DATA_FILE = os.path.join(DATA_DIR, "tasks.json")  # legacy single-project data file, used only for startup migration
 TOKEN_FILE = os.path.join(DATA_DIR, "auth_token.txt")
 PROJECTS_DIR = os.path.join(DATA_DIR, "projects")
 INDEX_FILE = os.path.join(DATA_DIR, "projects.json")
@@ -143,11 +146,11 @@ LOGIN_HTML = """<!DOCTYPE html>
 
 
 def load_or_create_token():
-    """读取 data/auth_token.txt；不存在则生成 32 位十六进制 token（权限 600）。"""
+    """Read data/auth_token.txt; generate a 32-char hex token (mode 600) if missing."""
     if os.path.exists(TOKEN_FILE):
         with open(TOKEN_FILE, encoding="utf-8") as f:
             return f.read().strip()
-    token = secrets.token_hex(16)  # 32 位十六进制
+    token = secrets.token_hex(16)  # 32 hex chars
     fd = os.open(TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(token + "\n")
@@ -157,7 +160,7 @@ def load_or_create_token():
     return token
 
 
-# ---------- 项目数据布局 ----------
+# ---------- project data layout ----------
 
 def valid_pid(pid):
     return bool(pid) and bool(PID_RE.fullmatch(pid))
@@ -180,16 +183,16 @@ def save_index(idx):
 
 
 def new_project_id(idx):
-    """生成不与现有项目/文件冲突的短随机 id（urlsafe 字符集，满足 valid_pid）。"""
+    """Generate a short random id that collides with no existing project/file (urlsafe charset, satisfies valid_pid)."""
     ids = {p["id"] for p in idx["projects"]}
     while True:
-        pid = secrets.token_urlsafe(6)  # 8 个字符
+        pid = secrets.token_urlsafe(6)  # 8 chars
         if valid_pid(pid) and pid not in ids and not os.path.exists(project_file(pid)):
             return pid
 
 
 def default_project_id():
-    """index 中第一个项目（最老项目）的 id；无项目时返回 None。"""
+    """Id of the first (oldest) project in the index; None when there are no projects."""
     try:
         idx = load_index()
     except (OSError, ValueError):
@@ -216,17 +219,17 @@ def _write_new_project(pid, name):
 
 
 def ensure_data_layout():
-    """启动时确保多项目数据布局就绪：
-    - 已有 data/projects/ 且 index 有效：直接使用
-    - 只有旧版 data/tasks.json：迁移为第一个项目，旧文件改名 tasks.json.migrated
-    - 全新安装：创建默认项目
-    - projects/ 存在但 index 缺失/为空：从项目文件重建 index；无任何项目则补默认项目
+    """Ensure the multi-project data layout is ready at startup:
+    - data/projects/ with a valid index: use as-is
+    - only legacy data/tasks.json: migrate into the first project, old file renamed tasks.json.migrated
+    - fresh install: create the default project
+    - projects/ exists but index missing/empty: rebuild the index from project files; add a default project if none
     """
     os.makedirs(DATA_DIR, exist_ok=True)
 
     if not os.path.isdir(PROJECTS_DIR):
         if os.path.exists(DATA_FILE):
-            # 迁移旧版单项目数据
+            # migrate legacy single-project data
             with open(DATA_FILE, encoding="utf-8") as f:
                 old = json.load(f)
             name = (old.get("project") or old.get("name") or "Default Project")
@@ -245,7 +248,7 @@ def ensure_data_layout():
             print(f"[data] 已将旧版 data/tasks.json 迁移为项目「{name}」(id={pid})，"
                   f"原文件已改名 data/tasks.json.migrated")
             return
-        # 全新安装
+        # fresh install
         idx = {"projects": []}
         pid = new_project_id(idx)
         os.makedirs(PROJECTS_DIR)
@@ -255,7 +258,7 @@ def ensure_data_layout():
         print(f"[data] 全新安装，已创建默认项目「Default Project」(id={pid})")
         return
 
-    # projects/ 已存在：校验 index
+    # projects/ exists: validate the index
     idx = None
     if os.path.exists(INDEX_FILE):
         try:
@@ -265,7 +268,7 @@ def ensure_data_layout():
     if idx and idx.get("projects"):
         return
 
-    # 从项目文件重建 index
+    # rebuild the index from project files
     projects = []
     for fn in sorted(os.listdir(PROJECTS_DIR)):
         pid = fn[:-5] if fn.endswith(".json") else None
@@ -321,12 +324,12 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, UnicodeDecodeError):
             return None
 
-    def log_message(self, fmt, *args):  # 简化日志
+    def log_message(self, fmt, *args):  # quiet logging
         pass
 
     # ---------- auth ----------
     def _client_token(self):
-        """从 Authorization: Bearer 请求头或 ?token= query 参数提取 token。"""
+        """Extract the token from the Authorization: Bearer header or the ?token= query param."""
         auth = self.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
             return auth[7:].strip()
@@ -341,7 +344,7 @@ class Handler(BaseHTTPRequestHandler):
         return bool(tok) and bool(AUTH_TOKEN) and hmac.compare_digest(tok, AUTH_TOKEN)
 
     def _reject(self):
-        """API 请求返回 401 JSON；页面请求返回登录页 HTML。"""
+        """API requests get 401 JSON; page requests get the login page HTML."""
         if urlparse(self.path).path.startswith("/api/"):
             self._send_json({"error": "unauthorized"}, 401)
         else:
@@ -354,7 +357,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------- routing ----------
     def _route(self, method):
-        """统一 API 路由。项目本体 -> 项目作用域任务路由 -> 旧版兼容路径 -> 静态文件。"""
+        """Unified API routing. Project entity -> project-scoped task routes -> legacy compat paths -> static files."""
         path = urlparse(self.path).path
         body = None
         if method in ("POST", "PUT", "PATCH"):
@@ -362,7 +365,7 @@ class Handler(BaseHTTPRequestHandler):
             if body is None:
                 return self._send_error_json(400, "invalid JSON")
 
-        # 项目集合
+        # project collection
         if path == "/api/projects":
             if method == "GET":
                 return self._list_projects()
@@ -370,7 +373,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._create_project(body)
             return self._send_error_json(405, "method not allowed")
 
-        # 项目本体
+        # project entity
         m = re.fullmatch(r"/api/projects/([A-Za-z0-9_-]{1,64})", path)
         if m:
             pid = m.group(1)
@@ -382,7 +385,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._delete_project(pid)
             return self._send_error_json(405, "method not allowed")
 
-        # 项目作用域内的任务/分组/排序
+        # project-scoped tasks/sections/reorder
         m = re.fullmatch(r"/api/projects/([A-Za-z0-9_-]{1,64})(/(?:tasks|sections|reorder)(?:/.*)?)", path)
         if m:
             pid, sub = m.group(1), m.group(2)
@@ -390,7 +393,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_error_json(404, "project not found")
             return self._tasks_route(method, pid, sub, body)
 
-        # 旧版单项目路径兼容：作用于 index 中第一个（最老）项目
+        # legacy single-project path compat: applies to the first (oldest) project in the index
         if re.fullmatch(r"/api/(?:tasks|sections|reorder)(?:/.*)?", path):
             pid = default_project_id()
             if pid is None:
@@ -404,8 +407,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send_error_json(404, "not found")
 
     def _tasks_route(self, method, pid, sub, body):
-        """项目作用域内的任务/分组/排序路由。
-        sub 形如 /tasks、/tasks/<id>、/sections、/sections/<name>、/reorder。"""
+        """Project-scoped task/section/reorder routing.
+        sub looks like /tasks, /tasks/<id>, /sections, /sections/<name>, /reorder."""
         if sub == "/tasks":
             if method == "GET":
                 with LOCK:
@@ -591,7 +594,7 @@ class Handler(BaseHTTPRequestHandler):
             if not task:
                 return self._send_error_json(404, "task not found")
             db["tasks"] = [t for t in db["tasks"] if t["id"] != task_id]
-            for t in db["tasks"]:  # 清理依赖引用
+            for t in db["tasks"]:  # clean up dependency references
                 if task_id in t.get("dependencies", []):
                     t["dependencies"] = [d for d in t["dependencies"] if d != task_id]
             save_db(pid, db)
@@ -665,7 +668,7 @@ class Handler(BaseHTTPRequestHandler):
     def _serve_static(self, path):
         if path == "/":
             path = "/index.html"
-        # 防目录穿越
+        # prevent directory traversal
         clean = posixpath.normpath(unquote(path)).lstrip("/")
         full = os.path.join(STATIC_DIR, clean)
         if not os.path.abspath(full).startswith(os.path.abspath(STATIC_DIR)) or not os.path.isfile(full):
@@ -677,8 +680,9 @@ class Handler(BaseHTTPRequestHandler):
         ctype = mimetypes.guess_type(full)[0] or "application/octet-stream"
         with open(full, "rb") as f:
             data = f.read()
-        # index.html 经 ?token= 认证后分发时，把静态资源链接也带上 token，
-        # 使浏览器导航请求（无法携带 Authorization 头）也能通过校验
+        # when index.html is served after ?token= auth, append the token to static
+        # asset links too, so browser navigation requests (which cannot carry the
+        # Authorization header) also pass validation
         if AUTH_ENABLED and clean == "index.html":
             qs = parse_qs(urlparse(self.path).query)
             qt = (qs.get("token") or [None])[0]
@@ -702,7 +706,7 @@ def main():
                     help="监听端口（默认 8787，也可用环境变量 MINI_ASANA_PORT）")
     args = ap.parse_args()
 
-    # 多项目数据布局：必要时自动迁移旧版 data/tasks.json 或创建默认项目
+    # multi-project data layout: auto-migrate legacy data/tasks.json or create the default project when needed
     ensure_data_layout()
 
     if args.no_auth or os.environ.get("MINI_ASANA_NO_AUTH") == "1":

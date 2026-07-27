@@ -1,13 +1,13 @@
 #!/bin/zsh
 # mini-asana tunnel watchdog
-# 每 2 分钟由 LaunchAgent 调用：检测 https://${DOMAIN} 是否被 Cloudflare 边缘正常服务。
-# 路由器 DNS 为 fake-ip 模式时，必须先用 DoH 取真实边缘 IP 再 --resolve 直连，
-# 否则检测结果不可信（假 IP 由路由器代理转发）。
-# 连续 2 次失败（000=连不上，530=边缘认不到隧道）则 kickstart 隧道服务。
+# Invoked by LaunchAgent every 2 minutes: checks whether https://${DOMAIN} is properly served by Cloudflare edge.
+# When the router DNS runs in fake-ip mode, the real edge IP must be resolved via DoH first and connected to with --resolve,
+# otherwise the result is untrustworthy (fake IPs are forwarded by the router proxy).
+# After 2 consecutive failures (000=unreachable, 530=edge does not know the tunnel), kickstart the tunnel service.
 #
-# 可通过环境变量覆盖两个默认值（例如在调用脚本或 plist 的 EnvironmentVariables 中设置）：
-#   WATCHDOG_DOMAIN       监控的域名（默认 your-domain.example.com，务必改成你的真实域名）
-#   WATCHDOG_TUNNEL_LABEL 隧道 launchd 服务的 Label（默认 local.miniasana-tunnel）
+# Two defaults can be overridden via environment variables (e.g. in the calling script or the plist's EnvironmentVariables):
+#   WATCHDOG_DOMAIN       domain to monitor (default your-domain.example.com; be sure to set your real domain)
+#   WATCHDOG_TUNNEL_LABEL launchd Label of the tunnel service (default local.miniasana-tunnel)
 
 set -u
 LOG="$HOME/mini-asana/watchdog.log"
@@ -17,7 +17,7 @@ TUNNEL_LABEL="${WATCHDOG_TUNNEL_LABEL:-local.miniasana-tunnel}"
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
-# 1) 取真实边缘 IP（DoH，绕过路由器 fake-ip）
+# 1) get the real edge IP (DoH, bypassing router fake-ip)
 IP=$(curl -s --max-time 8 "https://1.1.1.1/dns-query?name=${DOMAIN}&type=A" \
      -H 'accept: application/dns-json' \
      | /usr/bin/python3 -c "import sys,json
@@ -31,7 +31,7 @@ if [ -z "$IP" ]; then
     exit 0
 fi
 
-# 2) 直连边缘检测（根路径应 200/401；530=隧道失联，000=不通）
+# 2) direct edge check (root path should be 200/401; 530=tunnel lost, 000=unreachable)
 CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
        --resolve "${DOMAIN}:443:${IP}" "https://${DOMAIN}/")
 

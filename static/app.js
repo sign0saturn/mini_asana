@@ -1,7 +1,7 @@
-/* mini-asana 前端 SPA — 原生 JS，无外部依赖 */
+/* mini-asana frontend SPA — vanilla JS, no external dependencies */
 "use strict";
 
-/* ================= 状态 ================= */
+/* ================= state ================= */
 const state = {
   tasks: [],
   sections: [],
@@ -9,13 +9,13 @@ const state = {
   calYear: null,
   calMonth: null, // 0-based
   detailId: null,
-  tlSelected: new Set(), // 时间线多选横条（Shift/Cmd/Ctrl+click），用于批量平移
-  projectId: null,       // 当前项目 id
-  projects: [],          // 全部项目 [{id,name,task_count}]
-  legacy: false,         // 服务端无项目 API（旧版）时退回单项目模式
+  tlSelected: new Set(), // timeline multi-selected bars (Shift/Cmd/Ctrl+click), for batch shifting
+  projectId: null,       // current project id
+  projects: [],          // all projects [{id,name,task_count}]
+  legacy: false,         // fall back to single-project mode when the server has no projects API (legacy)
 };
 
-/* ================= 工具 ================= */
+/* ================= utilities ================= */
 const $ = (sel, root) => (root || document).querySelector(sel);
 const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
@@ -43,7 +43,7 @@ function catColor(name) {
   for (const ch of name) h = (h * 31 + ch.codePointAt(0)) >>> 0;
   return CAT_PALETTE[h % CAT_PALETTE.length];
 }
-/* #rrggbb 向白色混合 f（0=原色，1=白）：已完成色块用的浅色 tint */
+/* blend #rrggbb toward white by f (0=original color, 1=white): light tint for completed bars */
 function tintHex(hex, f) {
   const n = parseInt(hex.slice(1), 16);
   const m = c => Math.round(c + (255 - c) * f);
@@ -64,28 +64,29 @@ function sectionTasks(sec) {
   return state.tasks.filter(t => t.section === sec).sort((a, b) => a.order - b.order);
 }
 
-/* ================= 触屏拖拽（Pointer Events，iOS Safari 可用） ================= */
-/* 桌面端仍走 HTML5 DnD；本模块只在 pointerType === "touch" 时介入。
-   双条件触发模型，防误触：
-     阶段0（等待）：pressDelay 长按计时；期间位移 > cancelThreshold(15px) 视为滚动/轻扫，取消。
-     阶段1（armed）：长按成功 → 震动 + 高亮描边反馈，但还不出影子。
-     阶段2（拖拽）：armed 后位移 > dragThreshold(10px) 才真正进入拖拽
-                    （跟随影子 + 非 passive touchmove preventDefault 锁滚动）。
-   轻点（未达长按、位移小）不触发任何拖拽视觉，click 正常放行。 */
-let suppressClickUntil = 0; // 拖拽结束后短暂抑制 click，避免误开详情
+/* ================= touch dragging (Pointer Events, works on iOS Safari) ================= */
+/* Desktop still uses HTML5 DnD; this module only engages when pointerType === "touch".
+   Two-condition trigger model to avoid misfires:
+     phase 0 (waiting):  pressDelay long-press timer; movement > cancelThreshold(15px) during
+                         the wait counts as scroll/swipe and cancels.
+     phase 1 (armed):    long-press succeeded -> vibration + highlight outline, no ghost yet.
+     phase 2 (dragging): movement > dragThreshold(10px) after armed starts the real drag
+                         (following ghost + non-passive touchmove preventDefault scroll lock).
+   A plain tap (no long-press, small movement) triggers no drag visuals; click passes through. */
+let suppressClickUntil = 0; // briefly suppress click after a drag ends, to avoid opening details by accident
 function clickSuppressed() { return Date.now() < suppressClickUntil; }
 
 function _lockScroll(e) { e.preventDefault(); }
 
 function attachTouchDrag(el, opts) {
   const pressDelay = opts.pressDelay != null ? opts.pressDelay : 400;
-  const cancelTh = opts.cancelThreshold || 15; // 等待期内多大幅度算滚动取消
-  const dragTh = opts.dragThreshold || 10;     // armed 后多大幅度开始真拖
+  const cancelTh = opts.cancelThreshold || 15; // how much movement during the wait phase counts as scroll-cancel
+  const dragTh = opts.dragThreshold || 10;     // how much movement after armed starts the real drag
   el.addEventListener("pointerdown", e => {
     if (e.pointerType !== "touch" || e.button > 0) return;
     const startX = e.clientX, startY = e.clientY;
-    let phase = 0, ghost = null; // 0=等待长按 1=armed 2=拖拽中
-    try { el.setPointerCapture(e.pointerId); } catch (_) {} // 仅追踪，不影响滚动
+    let phase = 0, ghost = null; // 0=waiting for long-press 1=armed 2=dragging
+    try { el.setPointerCapture(e.pointerId); } catch (_) {} // tracking only; does not affect scrolling
     const timer = setTimeout(arm, pressDelay);
 
     function arm() {
@@ -110,7 +111,7 @@ function attachTouchDrag(el, opts) {
     function onMove(ev) {
       const dist = Math.hypot(ev.clientX - startX, ev.clientY - startY);
       if (phase === 0) {
-        if (dist > cancelTh) { clearTimeout(timer); cleanup(); } // 快速划过 = 滚动/轻点
+        if (dist > cancelTh) { clearTimeout(timer); cleanup(); } // fast swipe = scroll/tap
         return;
       }
       if (phase === 1) {
@@ -125,7 +126,7 @@ function attachTouchDrag(el, opts) {
       if (phase >= 1) suppressClickUntil = Date.now() + 350;
       cleanup();
     }
-    function onCancel() { cleanup(); } // 浏览器接管滚动时触发
+    function onCancel() { cleanup(); } // fired when the browser takes over scrolling
     function cleanup() {
       clearTimeout(timer);
       document.removeEventListener("touchmove", _lockScroll);
@@ -143,8 +144,8 @@ function attachTouchDrag(el, opts) {
   });
 }
 
-/* ================= 通用 UI 组件（替代原生 prompt/confirm/alert） ================= */
-/* toast 轻提示（替代 alert） */
+/* ================= shared UI components (replacing native prompt/confirm/alert) ================= */
+/* toast notification (replaces alert) */
 function showToast(msg, isError) {
   let t = $("#toast");
   if (!t) {
@@ -159,7 +160,7 @@ function showToast(msg, isError) {
   showToast._timer = setTimeout(() => t.classList.remove("show"), 3200);
 }
 
-/* 内联确认对话框（替代 confirm）：message + 取消/确认 */
+/* inline confirm dialog (replaces confirm): message + cancel/ok buttons */
 function confirmDialog(message, onOk) {
   const ov = document.createElement("div");
   ov.className = "confirm-overlay";
@@ -178,10 +179,10 @@ function confirmDialog(message, onOk) {
 }
 
 /*
- * 内联创建器（替代 prompt）：「＋ 按钮」→ 点击变「输入框 + ✓ 确认」。
- * - 回车 / 点 ✓ 提交（等价）；Esc 取消恢复按钮
- * - blur：内容为空才恢复按钮，非空保留（手机用户可能只是收起了键盘）
- * - 提交中禁用输入和按钮防重复提交；失败 toast 提示并恢复可编辑
+ * Inline creator (replaces prompt): a "+" button -> click turns it into "input + ✓ confirm".
+ * - Enter / clicking ✓ submits (equivalent); Esc cancels and restores the button
+ * - blur: restores the button only when empty; non-empty input stays (mobile users may have just dismissed the keyboard)
+ * - input and button are disabled while submitting to prevent duplicates; on failure a toast is shown and editing resumes
  */
 function makeInlineCreator(opts) {
   const wrap = document.createElement("div");
@@ -233,7 +234,7 @@ function makeInlineCreator(opts) {
         inp.focus();
         return;
       }
-      revert(); // 成功后恢复为按钮（列表/看板随后整体重渲染，此处无害）
+      revert(); // restore the button after success (list/board re-render wholesale right after, so this is harmless)
     }
     inp.addEventListener("keydown", e => {
       if (e.key === "Enter") { e.preventDefault(); submit(); }
@@ -241,17 +242,17 @@ function makeInlineCreator(opts) {
     });
     ok.addEventListener("click", submit);
     inp.addEventListener("blur", () => {
-      // 延迟判断：点 ✓ 会先触发 blur，此时 submitting 已为 true 则不恢复
+      // deferred check: clicking ✓ fires blur first; by then submitting is already true, so do not restore
       setTimeout(() => { if (!closed && !submitting && !inp.value.trim()) revert(); }, 120);
     });
   });
   return wrap;
 }
 
-/* ================= 字段 select 组件（datalist 在 iOS Safari 不可用，统一替换） ================= */
+/* ================= field select component (datalist is unusable on iOS Safari, uniformly replaced) ================= */
 const CUSTOM_OPT = "__custom__";
 
-/* 各字段的候选值：Category 取项目已有值；Effort 预置 小/中/大 + 已有值；Priority 固定 高/中/低 */
+/* candidate values per field: Category uses existing project values; Effort presets 小/中/大 + existing values; Priority is fixed to 高/中/低 */
 function fieldSuggestions(field) {
   if (field === "category") return [...new Set(state.tasks.map(t => t.category).filter(Boolean))];
   if (field === "effort") return [...new Set(["小", "中", "大", ...state.tasks.map(t => t.effort).filter(Boolean)])];
@@ -278,7 +279,7 @@ function fillSelectOptions(sel, field, current) {
   sel.value = current || "";
 }
 
-/* 提交式 select：用于详情面板和列表内联编辑，选定即 onCommit；选「自定义…」换成文本输入 */
+/* commit-style select: used in the detail panel and list inline editing; onCommit fires on selection; picking 自定义… swaps in a text input */
 function makeSelectOrCustom(opts) {
   const wrap = document.createElement("span");
   wrap.className = "sel-custom";
@@ -298,7 +299,7 @@ function makeSelectOrCustom(opts) {
     const finish = v => { if (!done) { done = true; opts.onCommit(v); } };
     inp.addEventListener("keydown", e => {
       if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); finish(inp.value.trim()); }
-      else if (e.key === "Escape") { done = true; render(); } // 放弃，恢复 select
+      else if (e.key === "Escape") { done = true; render(); } // abort, restore the select
     });
     inp.addEventListener("blur", () => setTimeout(() => finish(inp.value.trim()), 100));
   });
@@ -306,7 +307,7 @@ function makeSelectOrCustom(opts) {
   return wrap;
 }
 
-/* 取值式 select：用于创建对话框，提交时经 wrap.getValue() 取最终值 */
+/* value-style select: used in the create dialog; the final value is read via wrap.getValue() on submit */
 function makeDialogSelect(field) {
   const wrap = document.createElement("span");
   wrap.className = "sel-custom sel-custom-dialog";
@@ -330,17 +331,17 @@ function makeDialogSelect(field) {
   return wrap;
 }
 
-/* iOS 空日期框首次点击会自动提交今天并收起选择器：
-   触屏设备上 pointerdown 时若为空先填今天，选择器直接以今天为起点弹出，可正常滚动修改 */
+/* On iOS, the first tap on an empty date input auto-commits today and closes the picker:
+   on touch devices, pre-fill today on pointerdown when empty, so the picker opens starting from today and can be scrolled/changed normally */
 function fixIOSDateInput(inp) {
   if (!window.matchMedia("(pointer: coarse)").matches) return;
   inp.addEventListener("pointerdown", () => { if (!inp.value) inp.value = fmtDate(today()); });
 }
 
 /*
- * 新建任务对话框（替代内联输入，一次填好所有字段）。
- * prefill: { section?, start_on?, due_on? } —— 列表/看板传 section；时间线空白点击另传日期。
- * 名称必填（空时禁用创建按钮）；回车=创建（输入法组合中除外）；Esc/遮罩/✕/取消关闭。
+ * New-task dialog (replaces inline input; all fields filled in at once).
+ * prefill: { section?, start_on?, due_on? } — list/board pass section; timeline blank-area clicks also pass dates.
+ * Name is required (create button disabled while empty); Enter = create (except during IME composition); Esc/overlay/✕/cancel closes.
  */
 function openTaskDialog(prefill) {
   prefill = prefill || {};
@@ -383,14 +384,14 @@ function openTaskDialog(prefill) {
     sel.appendChild(o);
   }
   sel.value = prefill.section && state.sections.includes(prefill.section) ? prefill.section : state.sections[0];
-  // Category / Effort / Priority：select + 自定义（iOS datalist 不可用）
+  // Category / Effort / Priority: select + custom (iOS datalist unusable)
   const catF = makeDialogSelect("category");
   const effF = makeDialogSelect("effort");
   const priF = makeDialogSelect("priority");
   $q('[data-f="category"]').replaceWith(catF);
   $q('[data-f="effort"]').replaceWith(effF);
   $q('[data-f="priority"]').replaceWith(priF);
-  // iOS 空日期框首点会自动提交今天并收起，统一预填今天（时间线点击创建会覆盖为所点日期）
+  // iOS empty date inputs auto-commit today on first tap and close; pre-fill today uniformly (timeline click-create overwrites with the tapped date)
   $q(".td-start").value = prefill.start_on || fmtDate(today());
   $q(".td-due").value = prefill.due_on || fmtDate(today());
 
@@ -437,15 +438,15 @@ function openTaskDialog(prefill) {
   ov.querySelectorAll("input").forEach(inp => inp.addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.isComposing && inp.type !== "date") { e.preventDefault(); submit(); }
   }));
-  // 仅桌面端自动聚焦名称输入框（移动端避免弹出键盘干扰日期等字段操作）
+  // auto-focus the name input on desktop only (on mobile, avoid popping the keyboard and disturbing date/other fields)
   if (!window.matchMedia("(max-width: 768px)").matches) {
     setTimeout(() => nameInp.focus(), 0);
   }
 }
 
 /* ================= API ================= */
-/* token 认证：token 存 localStorage，所有请求自动带 Authorization: Bearer 头。
-   收到 401 时清除 token 并显示登录遮罩。--no-auth 模式下无 token 也能正常访问。 */
+/* token auth: the token lives in localStorage and every request automatically carries the Authorization: Bearer header.
+   On 401 the token is cleared and the login overlay is shown. In --no-auth mode everything works without a token. */
 const TOKEN_KEY = "mini_asana_token";
 function getToken() { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch (_) { return ""; } }
 function setToken(t) { try { localStorage.setItem(TOKEN_KEY, t); } catch (_) {} }
@@ -472,9 +473,9 @@ async function api(method, url, body) {
   }
   return res.json();
 }
-/* ---------- 项目 ---------- */
+/* ---------- projects ---------- */
 const PROJECT_KEY = "mini_asana_project";
-/* 项目作用域 API：/api/projects/<pid><path>；旧版服务端（无项目 API）退回 /api<path> */
+/* project-scoped API: /api/projects/<pid><path>; legacy servers (no projects API) fall back to /api<path> */
 function papi(method, path, body) {
   const url = state.legacy
     ? "/api" + path
@@ -489,7 +490,7 @@ async function loadProjects() {
     r = await api("GET", "/api/projects");
   } catch (e) {
     if (e.message === "unauthorized") throw e;
-    // 旧版服务端没有项目 API：退回单项目模式（任务走 /api/tasks 等旧路径）
+    // legacy server has no projects API: fall back to single-project mode (tasks use old paths like /api/tasks)
     state.legacy = true;
     state.projects = [];
     state.projectId = null;
@@ -546,11 +547,11 @@ function removeProject(p) {
   });
 }
 
-/* 侧边栏项目列表：点击切换，hover 显示 ✎ 重命名 / 🗑 删除（仅剩一个项目时不显示 🗑） */
+/* sidebar project list: click to switch; hover reveals ✎ rename / 🗑 delete (🗑 hidden when only one project remains) */
 function renderProjects() {
   const box = $("#project-list");
   if (!box) return;
-  if (box.querySelector(".project-rename-form")) return; // 重命名输入中不重建
+  if (box.querySelector(".project-rename-form")) return; // do not rebuild while a rename input is active
   box.innerHTML = "";
   if (projectCreatorEl) projectCreatorEl.style.display = state.legacy ? "none" : "";
   if (state.legacy) return;
@@ -581,7 +582,7 @@ function renderProjects() {
     item.appendChild(acts);
     item.addEventListener("click", () => {
       switchProject(p.id);
-      // 移动端：点击项目后收起抽屉
+      // mobile: collapse the drawer after tapping a project
       $("#sidebar").classList.remove("open");
       $("#sidebar-backdrop").classList.add("hidden");
     });
@@ -589,7 +590,7 @@ function renderProjects() {
   }
 }
 
-/* 项目重命名：把名称就地换成输入框 + ✓（同分组重命名模式） */
+/* project rename: swap the name in place for an input + ✓ (same pattern as section rename) */
 function startProjectRename(p, nameEl) {
   const form = document.createElement("span");
   form.className = "inline-creator-form project-rename-form";
@@ -620,7 +621,7 @@ function startProjectRename(p, nameEl) {
       await api("PATCH", "/api/projects/" + encodeURIComponent(p.id), { name });
       p.name = name;
       renderProjects();
-      renderStats(); // 顶栏标题随项目名更新
+      renderStats(); // topbar title follows the project name
     } catch (e) {
       showToast("重命名失败: " + e.message, true);
       busy = false;
@@ -645,12 +646,12 @@ async function loadAll() {
   state.tasks = db.tasks;
   state.sections = db.sections;
 }
-/* 启动流程：先取项目列表（决定 projectId），再加载该项目任务 */
+/* startup flow: fetch the project list first (determines projectId), then load that project's tasks */
 async function boot() {
   await loadProjects();
   await loadAll();
 }
-let projectCreatorEl = null; // 「＋ 新建项目」内联创建器（init 时挂载）
+let projectCreatorEl = null; // inline creator for the "＋ 新建项目" button (mounted in init)
 
 async function updateTask(id, patch, opts) {
   const t = taskById(id);
@@ -662,7 +663,7 @@ async function updateTask(id, patch, opts) {
     showToast("保存失败: " + e.message, true);
     await loadAll();
   }
-  if (!opts || !opts.silent) render(); // silent：批量提交时跳过，由调用方最后统一 render
+  if (!opts || !opts.silent) render(); // silent: skipped during batch commits; the caller renders once at the end
 }
 async function createTask(payload) {
   const t = await papi("POST", "/tasks", payload);
@@ -681,7 +682,7 @@ async function moveTask(taskId, targetSection, targetIndex) {
   const t = taskById(taskId);
   if (!t) return;
   const srcSection = t.section;
-  // 乐观更新
+  // optimistic update
   const siblings = sectionTasks(targetSection).filter(x => x.id !== taskId);
   t.section = targetSection;
   siblings.splice(targetIndex, 0, t);
@@ -704,7 +705,7 @@ async function addSection(name) {
   state.sections.push(name);
   render();
 }
-/* 分组重命名：把 h3 标题就地换成输入框 + ✓（替代 prompt） */
+/* section rename: swap the h3 title in place for an input + ✓ (replaces prompt) */
 function startSectionRename(oldName, h3) {
   if (!h3) return;
   const form = document.createElement("span");
@@ -768,14 +769,14 @@ async function removeSection(name) {
   });
 }
 
-/* ================= 渲染入口 ================= */
+/* ================= render entry ================= */
 function render() {
   renderStats();
   renderProjects();
   renderDatalists();
   $$(".tab").forEach(b => b.classList.toggle("active", b.dataset.view === state.view));
   const c = $("#view-container");
-  // 重渲染前保存滚动位置（视图容器 + 时间线/看板自带滚动层），渲染完成后恢复，避免拖动提交后跳动/丢失位置
+  // save scroll positions before re-rendering (view container + the timeline/board's own scroll layers) and restore afterwards, avoiding jumps/lost positions after drag commits
   const savedScroll = [["#view-container", c], ["#timeline", $("#timeline")], ["#board", $("#board")]]
     .filter(([, el]) => el)
     .map(([sel, el]) => [sel, el.scrollLeft, el.scrollTop]);
@@ -796,7 +797,7 @@ function render() {
 
 function renderStats() {
   const ap = activeProject();
-  if (ap) $("#project-title").textContent = ap.name; // 顶栏标题 = 当前项目名
+  if (ap) $("#project-title").textContent = ap.name; // topbar title = current project name
   const open = state.tasks.filter(t => !t.completed).length;
   const done = state.tasks.length - open;
   if (window.matchMedia("(max-width: 768px)").matches) {
@@ -811,7 +812,7 @@ function renderDatalists() {
   $("#dl-assignees").innerHTML = assignees.map(a => `<option value="${esc(a)}">`).join("");
 }
 
-/* 内联编辑：点击字段变输入框 */
+/* inline editing: click a field to turn it into an input */
 function inlineEdit(value, onCommit, opts) {
   opts = opts || {};
   const span = document.createElement(opts.textarea ? "textarea" : "input");
@@ -847,7 +848,7 @@ function makeCheckbox(task) {
   return b;
 }
 
-/* ================= 列表视图 ================= */
+/* ================= list view ================= */
 function renderList(container) {
   for (const sec of state.sections) {
     const secEl = document.createElement("div");
@@ -864,7 +865,7 @@ function renderList(container) {
       </span>`;
     header.querySelector('[data-act="rename"]').addEventListener("click", () => startSectionRename(sec, header.querySelector("h3")));
     header.querySelector('[data-act="delete"]').addEventListener("click", () => removeSection(sec));
-    // 拖到 section 标题 = 移到该 section 末尾
+    // dropping onto a section header = move to the end of that section
     header.addEventListener("dragover", e => { e.preventDefault(); });
     header.addEventListener("drop", e => {
       e.preventDefault();
@@ -877,13 +878,13 @@ function renderList(container) {
       secEl.appendChild(makeListRow(task, sec));
     }
 
-    // 添加任务：弹出表单对话框，一次填好字段
+    // add task: pop up the form dialog to fill all fields at once
     const addTaskBtn = document.createElement("button");
     addTaskBtn.className = "add-task-btn";
     addTaskBtn.textContent = "＋ 添加任务";
     addTaskBtn.addEventListener("click", () => openTaskDialog({ section: sec }));
     secEl.appendChild(addTaskBtn);
-    // 拖到空白区 = 移到末尾（行/标题的 drop 已 stopPropagation）
+    // dropping on blank area = move to end (row/header drops already stopPropagation)
     secEl.addEventListener("dragover", e => e.preventDefault());
     secEl.addEventListener("drop", e => {
       e.preventDefault();
@@ -894,7 +895,7 @@ function renderList(container) {
   }
 }
 
-/* 列表触屏拖拽辅助：清除落点高亮 / 命中检测（行 → before/after；section → 末尾） */
+/* list touch-drag helpers: clear drop highlight / hit testing (row -> before/after; section -> end) */
 function clearListDropMarks() {
   $$(".list-row.drop-before, .list-row.drop-after").forEach(r => r.classList.remove("drop-before", "drop-after"));
 }
@@ -933,7 +934,7 @@ function makeListRow(task, sec) {
     row.classList.remove("dragging");
     clearListDropMarks();
   });
-  // 触屏：按住手柄 180ms 进入拖拽（handle 已设 touch-action:none，无滚动冲突）
+  // touch: hold the handle 180ms to start dragging (handle has touch-action:none, no scroll conflict)
   attachTouchDrag(handle, {
     pressDelay: 180,
     makeGhost: () => {
@@ -965,7 +966,7 @@ function makeListRow(task, sec) {
 
   row.appendChild(makeCheckbox(task));
 
-  // 任务名：单击打开详情面板（改名在详情面板进行；与看板/时间线/日历行为一致）
+  // task name: single click opens the detail panel (renaming happens there; consistent with board/timeline/calendar)
   const nameCell = document.createElement("div");
   nameCell.className = "task-name";
   const nameView = document.createElement("span");
@@ -979,11 +980,11 @@ function makeListRow(task, sec) {
   nameCell.appendChild(nameView);
   row.appendChild(nameCell);
 
-  // 负责人
+  // assignee
   row.appendChild(makeCell(task, "assignee", { list: "dl-assignees", placeholder: "负责人" }));
-  // 截止日期
+  // due date
   row.appendChild(makeCell(task, "due_on", { type: "date", cls: "cell-date" }));
-  // Category / Effort / Priority（点击后为 select + 自定义）
+  // Category / Effort / Priority (becomes select + custom after click)
   row.appendChild(makeCell(task, "category", { pill: true }));
   row.appendChild(makeCell(task, "effort", { placeholder: "工作量" }));
   row.appendChild(makeCell(task, "priority", { pri: true }));
@@ -1000,14 +1001,14 @@ function makeListRow(task, sec) {
   });
   row.appendChild(del);
 
-  // 行内非交互空白区（名字单元格 padding、行本体）点击 → 打开详情；
-  // 勾选框/字段内联编辑/手柄/删除按钮的点击 target 是各自元素，不会命中此分支
+  // clicks on non-interactive blank areas of the row (name-cell padding, row body) -> open details;
+  // clicks on the checkbox / field inline editors / handle / delete button target those elements and never hit this branch
   row.addEventListener("click", e => {
     if (e.target !== row && e.target !== nameCell) return;
     if (!clickSuppressed()) openDetail(task.id);
   });
 
-  // 放置目标
+  // drop target
   row.addEventListener("dragover", e => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
@@ -1045,7 +1046,7 @@ function makeCell(task, field, opts) {
     view.style.cursor = "pointer";
     view.title = "点击编辑";
     view.addEventListener("click", () => {
-      // Category / Effort / Priority 用 select+自定义（datalist 在 iOS 不可用）
+      // Category / Effort / Priority use select+custom (datalist unusable on iOS)
       if (field === "category" || field === "effort" || field === "priority") {
         const w = makeSelectOrCustom({
           field,
@@ -1070,7 +1071,7 @@ function makeCell(task, field, opts) {
   return cell;
 }
 
-/* ================= 看板视图 ================= */
+/* ================= board view ================= */
 function renderBoard(container) {
   const board = document.createElement("div");
   board.id = "board";
@@ -1103,7 +1104,7 @@ function renderBoard(container) {
     });
     col.appendChild(cards);
 
-    // 添加任务：弹出表单对话框（替代内联输入）
+    // add task: pop up the form dialog (replaces inline input)
     const addTaskBtn = document.createElement("button");
     addTaskBtn.className = "add-task-btn";
     addTaskBtn.textContent = "＋ 添加任务";
@@ -1188,7 +1189,7 @@ function makeBoardCard(task, sec) {
     const idx = list.findIndex(t => t.id === task.id);
     moveTask(id, sec, idx);
   });
-  // 触屏：长按 400ms 进入拖拽（等待期移动 >15px 视为滚动取消，激活后移 10px 才真拖），跨列/列内落位
+  // touch: long-press 400ms to start dragging (movement >15px during the wait cancels as scroll; 10px after armed starts the real drag), drop across/within columns
   attachTouchDrag(card, {
     pressDelay: 400,
     cancelThreshold: 15,
@@ -1221,7 +1222,7 @@ function makeBoardCard(task, sec) {
   return card;
 }
 
-/* 看板触屏拖拽辅助 */
+/* board touch-drag helpers */
 function clearBoardDropMarks() {
   $$(".board-card.drop-before").forEach(c => c.classList.remove("drop-before"));
   $$(".board-col.drag-over").forEach(c => c.classList.remove("drag-over"));
@@ -1239,14 +1240,14 @@ function boardDropTarget(x, y, selfCard) {
   return null;
 }
 
-/* ================= 时间线视图 ================= */
+/* ================= timeline view ================= */
 const TL = { dayW: 30, nameW: 220, headerH: 34, rowH: 34, secRowH: 30 };
 
 /*
- * 时间线行排序：组内 Kahn 拓扑排序。
- * - 仅考虑本组（已过滤为有日期任务）内部的依赖边；跨 section 依赖不参与排序。
- * - ready 集中每次取「截止日期最早，其次当前 order」的任务，保证结果稳定且同链任务逐层相邻。
- * - 检测到环时，环内任务按原相对顺序追加，不丢任务、不死循环。
+ * Timeline row ordering: Kahn topological sort within each group.
+ * - Only dependency edges inside the group (already filtered to dated tasks) are considered; cross-section dependencies do not affect ordering.
+ * - Each pick from the ready set takes "earliest due date, then current order", keeping results stable and chained tasks adjacent layer by layer.
+ * - On cycle detection, cycle members are appended in their original relative order — no tasks lost, no infinite loop.
  */
 function topoSortTasks(tasks) {
   const ids = new Set(tasks.map(t => t.id));
@@ -1274,7 +1275,7 @@ function topoSortTasks(tasks) {
       if (d === 0) ready.push(byId.get(sid));
     }
   }
-  if (out.length < tasks.length) { // 有环：剩余任务保持原相对顺序追加
+  if (out.length < tasks.length) { // cycle present: remaining tasks appended in original relative order
     const placed = new Set(out.map(t => t.id));
     for (const t of tasks) if (!placed.has(t.id)) out.push(t);
   }
@@ -1283,17 +1284,17 @@ function topoSortTasks(tasks) {
 
 
 /*
- * 时间线空白区点击/拖选创建任务。
- * - 点击空白（非横条）：弹出创建对话框，分组=所在行 section，开始=截止=点击处日期
- * - 鼠标按住横向拖动 >5px：拖选日期范围（虚线框视觉反馈），开始=起点、截止=终点
- * - 触屏保持滚动优先，只用 tap（click）触发单日创建；横条上的交互不受影响
+ * Click / drag-select on timeline blank areas to create tasks.
+ * - Click blank (not a bar): open the create dialog, section = the row's section, start = due = clicked date
+ * - Mouse held and dragged horizontally >5px: drag-select a date range (dashed-box visual feedback), start = drag start, due = drag end
+ * - Touch keeps scroll priority; only tap (click) triggers single-day creation; interactions on bars are unaffected
  */
 function attachTrackCreate(track, sec, rangeStart) {
   const dateAtX = px => addDays(rangeStart, Math.max(0, Math.floor(px / TL.dayW)));
   let mouseHandledAt = 0;
 
   track.addEventListener("pointerdown", e => {
-    if (e.pointerType === "touch") return; // 触屏走 click（tap），不干扰滚动
+    if (e.pointerType === "touch") return; // touch goes through click (tap); do not disturb scrolling
     if (e.button > 0 || e.target.closest(".tl-bar")) return;
     e.preventDefault();
     const rect = track.getBoundingClientRect();
@@ -1333,9 +1334,9 @@ function attachTrackCreate(track, sec, rangeStart) {
   });
 
   track.addEventListener("click", e => {
-    if (Date.now() - mouseHandledAt < 400) return; // 鼠标路径已在 pointerup 处理
-    if (e.target.closest(".tl-bar")) return;       // 点在横条上 = 打开详情，不创建
-    if (clickSuppressed()) return;                 // 拖拽刚结束的合成 click
+    if (Date.now() - mouseHandledAt < 400) return; // mouse path already handled at pointerup
+    if (e.target.closest(".tl-bar")) return;       // tap on a bar = open details, do not create
+    if (clickSuppressed()) return;                 // synthetic click right after a drag
     const rect = track.getBoundingClientRect();
     const d = dateAtX(e.clientX - rect.left);
     openTaskDialog({ section: sec, start_on: fmtDate(d), due_on: fmtDate(d) });
@@ -1346,12 +1347,12 @@ function renderTimeline(container) {
   const wrap = document.createElement("div");
   wrap.id = "timeline";
 
-  // 移动端：天列宽 30→20px，sticky 任务列 220→110px（所有坐标换算都基于这两个值）
+  // mobile: day column width 30->20px, sticky task column 220->110px (all coordinate math is based on these two values)
   const isMobile = window.matchMedia("(max-width: 768px)").matches;
   TL.dayW = isMobile ? 20 : 30;
   TL.nameW = isMobile ? 110 : 220;
 
-  // 计算日期范围
+  // compute the date range
   const dated = state.tasks.filter(t => t.start_on || t.due_on);
   if (!dated.length) {
     wrap.innerHTML = '<div class="tl-empty-hint">没有带日期的任务。在任务详情中设置开始/截止日期后会显示在这里。</div>';
@@ -1362,16 +1363,16 @@ function renderTimeline(container) {
   const bars = new Map(); // id -> {start, due}
   for (const t of dated) {
     let s = parseDate(t.start_on), d = parseDate(t.due_on);
-    if (!s && d) s = new Date(d);          // 无开始日期：只画截止日单日横条，不推断长度（避免伪造数据）
-    if (!d && s) d = new Date(s);          // 无截止日期：单日
+    if (!s && d) s = new Date(d);          // no start date: draw a single-day bar on the due date only, do not infer length (avoid fabricating data)
+    if (!d && s) d = new Date(s);          // no due date: single day
     if (d < s) d = new Date(s);
     bars.set(t.id, { start: s, due: d, inferred: !t.start_on || !t.due_on });
     if (!minD || s < minD) minD = s;
     if (!maxD || d > maxD) maxD = d;
   }
-  // 对齐到周一 + buffer
+  // align to Monday + buffer
   let rangeStart = addDays(minD, -7);
-  rangeStart = addDays(rangeStart, -((rangeStart.getDay() + 6) % 7)); // 对齐周一
+  rangeStart = addDays(rangeStart, -((rangeStart.getDay() + 6) % 7)); // align to Monday
   const rangeEnd = addDays(maxD, 14);
   const totalDays = diffDays(rangeStart, rangeEnd) + 1;
   const trackW = totalDays * TL.dayW;
@@ -1381,10 +1382,10 @@ function renderTimeline(container) {
   const inner = document.createElement("div");
   inner.className = "tl-inner";
   inner.style.width = (TL.nameW + trackW) + "px";
-  inner.style.setProperty("--day-w", TL.dayW + "px"); // 供 CSS 渐变网格使用
-  inner.style.setProperty("--name-w", TL.nameW + "px"); // sticky 任务列宽
+  inner.style.setProperty("--day-w", TL.dayW + "px"); // for the CSS gradient grid
+  inner.style.setProperty("--name-w", TL.nameW + "px"); // sticky task column width
 
-  // 表头（按天刻度：上排月份、下排日号）
+  // header (day scale: months on the top row, day numbers below)
   const header = document.createElement("div");
   header.className = "tl-header";
   header.style.height = TL.headerH + "px";
@@ -1397,7 +1398,7 @@ function renderTimeline(container) {
   const monthsRow = document.createElement("div");
   monthsRow.className = "tl-months";
   let mi = 0;
-  while (mi < totalDays) { // 按月份分组，跨月分段
+  while (mi < totalDays) { // group by month, split segments at month boundaries
     const d0 = addDays(rangeStart, mi);
     const mKey = d0.getFullYear() * 100 + d0.getMonth();
     let mj = mi;
@@ -1429,7 +1430,7 @@ function renderTimeline(container) {
   header.appendChild(scale);
   inner.appendChild(header);
 
-  // 行 + 记录 bar 坐标（供依赖箭头）
+  // rows + record bar coordinates (for dependency arrows)
   const barPos = new Map(); // id -> {x1, x2, y}
   let y = TL.headerH;
   const rowEls = [];
@@ -1459,15 +1460,15 @@ function renderTimeline(container) {
       track.className = "tl-track";
       track.style.width = trackW + "px";
       attachTrackCreate(track, sec, rangeStart);
-      // 天/周网格线与周末底色由 .tl-track 的 CSS 渐变绘制（rangeStart 对齐周一，周期 7 天）
+      // day/week grid lines and weekend shading are drawn by .tl-track's CSS gradients (rangeStart aligned to Monday, period 7 days)
       const bar = document.createElement("div");
       bar.className = "tl-bar" + (t.completed ? " done" : "");
-      bar.dataset.taskId = t.id; // 供多选高亮/批量拖动定位
-      if (state.tlSelected.has(t.id)) bar.classList.add("tl-bar-selected"); // 重渲染后保持选中态
+      bar.dataset.taskId = t.id; // for multi-select highlight / batch drag positioning
+      if (state.tlSelected.has(t.id)) bar.classList.add("tl-bar-selected"); // keep the selected state across re-renders
       if (b.inferred) bar.style.opacity = "0.75";
-      // 色块按 Category 着色（与日历同一套 catColor 映射）：
-      // 未完成 = 实心主题色；已完成 = 主题色的浅色 tint（保留完成置灰感，与 inferred 的 opacity 不冲突）；
-      // 无 Category 保持默认蓝/绿样式
+      // bars are colored by Category (same catColor mapping as the calendar):
+      // open = solid theme color; completed = light tint of the theme color (keeps the greyed-out done feel, no conflict with inferred opacity);
+      // no Category keeps the default blue/green style
       if (t.category) {
         const cc = catColor(t.category);
         if (t.completed) {
@@ -1478,13 +1479,13 @@ function renderTimeline(container) {
           bar.style.borderColor = cc;
         }
       }
-      // tooltip 只显示真实数据：有 start 才显示区间，没有就只显示截止
+      // tooltip shows real data only: show the range only when start exists, otherwise just the due date
       const sF = fmtDate(b.start), dF = fmtDate(b.due);
       bar.title = t.name + "\n" + (t.start_on ? (sF === dF ? sF : `${sF} → ${dF}`) : `截止 ${dF}`);
       positionBar(bar, b, xOf);
       bar.innerHTML = '<span class="tl-resize l"></span><span class="tl-resize r"></span>';
-      // 任务名标签统一放色块右侧外部（深色完整显示，不截断）；
-      // 右侧贴图表右缘空间不足时兜底放左侧外部（右对齐）
+      // task name labels always sit outside the bar on the right (full dark text, not truncated);
+      // fall back to outside-left (right-aligned) when there is not enough room near the chart's right edge
       const label = document.createElement("span");
       label.textContent = t.name;
       label.className = "tl-bar-label";
@@ -1502,7 +1503,7 @@ function renderTimeline(container) {
     }
   }
 
-  // 今天线
+  // today line
   const td = today();
   if (td >= rangeStart && td <= rangeEnd) {
     const line = document.createElement("div");
@@ -1513,7 +1514,7 @@ function renderTimeline(container) {
     inner.appendChild(line);
   }
 
-  // 依赖箭头（显式尺寸，避免百分比高度塌陷）
+  // dependency arrows (explicit sizes, avoiding percentage-height collapse)
   inner.appendChild(buildDepArrows(barPos, TL.nameW + trackW, y));
 
   const skipped = state.tasks.length - dated.length;
@@ -1526,16 +1527,17 @@ function renderTimeline(container) {
     inner.appendChild(hint);
   }
 
-  // 点击横条以外的空白区域：清空多选
+  // clicking blank areas outside bars: clear multi-selection
   wrap.addEventListener("click", e => { if (!e.target.closest(".tl-bar")) clearTLSelect(); });
 
   wrap.appendChild(inner);
   container.appendChild(wrap);
 }
 
-/* Canvas 量 .tl-bar-label 文本宽度：元素未挂树时也能用（renderTimeline 构建期是离屏 DOM）。
-   用于判断标签放色块右侧外部时空间是否足够（不够则兜底放左侧）。
-   字号与 CSS 同步：桌面 11px / 移动端 10px；字族取 body 计算样式。 */
+/* Canvas-based measurement of .tl-bar-label text width: works even for elements not yet in the tree
+   (renderTimeline builds off-screen DOM). Used to decide whether there is enough room for the label
+   outside the bar's right edge (falls back to the left side when not).
+   Font sizes stay in sync with CSS: desktop 11px / mobile 10px; font family taken from body's computed style. */
 let _tlLabelCtx = null;
 function tlLabelWidth(text) {
   if (!_tlLabelCtx) _tlLabelCtx = document.createElement("canvas").getContext("2d");
@@ -1549,7 +1551,7 @@ function positionBar(bar, b, xOf) {
   bar.style.width = (diffDays(b.start, b.due) + 1) * TL.dayW - 2 + "px";
 }
 
-/* 时间线多选：Shift/Cmd/Ctrl+click 切换选中；空白点击 / Esc 清空（在 init 与 renderTimeline 接线） */
+/* timeline multi-select: Shift/Cmd/Ctrl+click toggles selection; blank click / Esc clears (wired up in init and renderTimeline) */
 function toggleTLSelect(id) {
   if (state.tlSelected.has(id)) state.tlSelected.delete(id);
   else state.tlSelected.add(id);
@@ -1564,7 +1566,7 @@ function clearTLSelect() {
 function attachBarDrag(bar, task, b, xOf) {
   let mode = null, startX = 0, origStart = null, origDue = null, batch = [];
 
-  // 进入拖拽态：鼠标 pointerdown 立即调用；触屏长按 300ms 后调用（以激活时手指位置为锚，防横条跳动）
+  // enter drag state: called immediately on mouse pointerdown; on touch after a 300ms long-press (anchored at the finger position on activation, preventing bar jumps)
   function startDrag(e, anchorX) {
     startX = anchorX;
     origStart = new Date(b.start);
@@ -1573,7 +1575,7 @@ function attachBarDrag(bar, task, b, xOf) {
     bar.classList.add(mode === "move" ? "dragging" : "resizing");
     try { bar.setPointerCapture(e.pointerId); } catch (_) {}
 
-    // 桌面多选批量：拖动「已选中」的横条移动时，其余选中条按相同天数实时跟随（resize 不批量；触屏无多选）
+    // desktop multi-select batch: when a selected bar is dragged, the other selected bars follow live by the same number of days (resize is not batched; no multi-select on touch)
     batch = [];
     if (e.pointerType !== "touch" && mode === "move" && state.tlSelected.size > 1 && state.tlSelected.has(task.id)) {
       const barEls = {};
@@ -1582,7 +1584,7 @@ function attachBarDrag(bar, task, b, xOf) {
         if (id === task.id) continue;
         const bt = taskById(id), bEl = barEls[id];
         if (!bt || !bEl) continue;
-        const bs = parseDate(bt.start_on) || parseDate(bt.due_on); // 无 start 的单日条：start 视为 due
+        const bs = parseDate(bt.start_on) || parseDate(bt.due_on); // single-day bar without start: treat start as due
         const bd = parseDate(bt.due_on) || parseDate(bt.start_on);
         if (!bs || !bd) continue;
         batch.push({ id, bar: bEl, s: bs, d: bd, hadStart: !!bt.start_on });
@@ -1613,20 +1615,20 @@ function attachBarDrag(bar, task, b, xOf) {
       const ns = bar.dataset.ns, nd = bar.dataset.nd;
       const changed = ns && nd && (ns !== fmtDate(b.start) || nd !== fmtDate(b.due));
       if (changed) {
-        const delta = diffDays(b.due, parseDate(nd)); // 被拖条的平移天数，跟随条按同量偏移
+        const delta = diffDays(b.due, parseDate(nd)); // shift in days of the dragged bar; followers offset by the same amount
         const jobs = [];
         if (!task.start_on && mode === "move") {
-          // 无 start_on 的单日条：整体移动只改 due_on，不借机伪造 start_on
+          // single-day bar without start_on: whole-bar moves only change due_on, never fabricate a start_on
           jobs.push([task.id, { due_on: nd }]);
         } else {
-          // 边缘拖拽（l/r）会把 start_on「拉出来」，此时才写入 start_on
+          // edge drags (l/r) "pull out" a start_on; only then is start_on written
           jobs.push([task.id, { start_on: ns, due_on: nd }]);
         }
         for (const it of batch) {
           const ns2 = fmtDate(addDays(it.s, delta)), nd2 = fmtDate(addDays(it.d, delta));
           jobs.push(it.hadStart ? [it.id, { start_on: ns2, due_on: nd2 }] : [it.id, { due_on: nd2 }]);
         }
-        // 逐个静默 PUT，全部完成后一次重渲染（render 内部会保持滚动位置）
+        // silent PUTs one by one, single re-render after all complete (render preserves scroll position internally)
         for (const [id, patch] of jobs) await updateTask(id, patch, { silent: true });
         render();
       } else {
@@ -1640,7 +1642,7 @@ function attachBarDrag(bar, task, b, xOf) {
     bar.addEventListener("pointercancel", onUp);
   }
 
-  // Pointer Events：鼠标与触屏分流（.tl-bar 触屏已放开 touch-action: pan-x pan-y）
+  // Pointer Events: mouse and touch paths diverge (.tl-bar allows touch-action: pan-x pan-y on touch)
   bar.addEventListener("pointerdown", e => {
     if (e.button > 0) return;
     e.stopPropagation();
@@ -1650,11 +1652,11 @@ function attachBarDrag(bar, task, b, xOf) {
 
     if (e.pointerType !== "touch") {
       e.preventDefault();
-      startDrag(e, e.clientX); // 桌面鼠标：原逻辑，立即拖
+      startDrag(e, e.clientX); // desktop mouse: original logic, drag immediately
       return;
     }
 
-    // 触屏：长按 300ms 才进入拖拽；未长按时在横条上滑动 = 正常滚动（不干预）
+    // touch: drag only after a 300ms long-press; swiping on a bar without a long-press = normal scrolling (no interference)
     const downX = e.clientX, downY = e.clientY;
     let lastX = downX, fired = false;
     const timer = setTimeout(() => {
@@ -1663,13 +1665,13 @@ function attachBarDrag(bar, task, b, xOf) {
       detach();
       bar.classList.add("tl-bar-armed");
       if (navigator.vibrate) try { navigator.vibrate(10); } catch (_) {}
-      document.addEventListener("touchmove", _lockScroll, { passive: false }); // 激活后才锁滚动
+      document.addEventListener("touchmove", _lockScroll, { passive: false }); // scroll lock only after activation
       startDrag(e, lastX);
     }, 300);
 
     function onEarlyMove(ev) {
       lastX = ev.clientX;
-      if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 10) abort(); // 快速划过 = 滚动/轻扫
+      if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 10) abort(); // fast swipe = scroll/swipe
     }
     function onEarlyEnd() { abort(); }
     function abort() {
@@ -1687,7 +1689,7 @@ function attachBarDrag(bar, task, b, xOf) {
     bar.addEventListener("pointerup", onEarlyEnd);
     bar.addEventListener("pointercancel", onEarlyEnd);
   });
-  // 点击：拖动过不当点击；Shift/Cmd/Ctrl+click 切换多选；普通点击清空选择并打开详情
+  // click: not treated as a click after dragging; Shift/Cmd/Ctrl+click toggles multi-select; plain click clears selection and opens details
   bar.addEventListener("click", e => {
     if (bar.dataset.moved === "1") { bar.dataset.moved = "0"; return; }
     if (clickSuppressed()) return;
@@ -1698,57 +1700,58 @@ function attachBarDrag(bar, task, b, xOf) {
 }
 
 /*
- * 依赖连线：正交路由（只走水平/竖直段、零斜线）+ 大圆角弧形弯（仿 Asana 的柔和折线）。
- * 前置右缘中点 → 出口小弧（r≤4：弧在行中点 ±4px 内完成，竖直段走 +4px 通道，
- *   不碰前置右缘 +7 起的任务名标签）→ 竖直到前置行底的行间隙净空带
- *   → 大弧（目标 18px，按邻边长收敛）转入行间隙 → 水平通行
- *   → 大弧转竖直 → 竖直进后继行 → 大弧钩入后继左缘中点（箭头 orient:auto 跟随）。
- * 全路径只用 L/A 命令；每个弯都是 1/4 圆弧，半径 = min(18, 邻边余量)，贴邻行时自动变小但保持圆润。
- * 后继在上方（跨 section）对称镜像；后继在左（日期重叠）时行间隙段向左，形状相同。
- * 同行：U 形浅蘸 11px（水平间隙 <24px 时沉到行底 17px，从两条横条下方通行），兜底直连。
+ * Dependency links: orthogonal routing (horizontal/vertical segments only, zero diagonals) + large rounded arc bends (Asana-style soft polylines).
+ * Predecessor right-edge midpoint -> small exit arc (r<=4: the arc completes within +-4px of the row midpoint, the vertical
+ *   segment runs in the +4px channel, never touching the task-name label that starts at +7 from the predecessor's right edge)
+ *   -> vertical down to the clear band in the row gap below the predecessor row
+ *   -> large arc (target 18px, shrunk to fit adjacent lengths) turning into the row gap -> horizontal travel
+ *   -> large arc turning vertical -> vertical into the successor row -> large arc hooking into the successor's left-edge midpoint (arrowhead orient:auto follows).
+ * The whole path uses only L/A commands; every bend is a quarter arc with radius = min(18, adjacent-edge allowance), shrinking near adjacent rows but staying round.
+ * Successor above (cross-section): symmetric mirror; successor to the left (overlapping dates): the row-gap segment goes left, same shape.
+ * Same row: shallow U dip of 11px (when the horizontal gap <24px, sink to 17px below the row bottom, passing under both bars); straight line as last resort.
  */
 function elbowPathD(x1, y1, x2, y2) {
   const dx = x2 - x1;
   if (y1 === y2) return sameRowBumpD(x1, y1, x2, dx);
-  const sy = y2 > y1 ? 1 : -1;            // 竖直方向：下 +1 / 上 -1
-  const d = dx >= 0 ? 1 : -1;             // 行间隙水平方向
-  const gapY = y1 + sy * TL.rowH / 2;     // 前置行的行边界（行间隙净空带中线）
-  const v1 = TL.rowH / 2;                 // 出口竖直段总落差（到行间隙）
-  const v2 = Math.abs(y2 - gapY);         // 入后继竖直段总落差
-  const hg = Math.abs(dx);                // 行间隙水平总可用距离
-  const r1 = Math.min(4, v1 / 2);         // 出口弯：标签安全上限 4px
+  const sy = y2 > y1 ? 1 : -1;            // vertical direction: down +1 / up -1
+  const d = dx >= 0 ? 1 : -1;             // horizontal direction within the row gap
+  const gapY = y1 + sy * TL.rowH / 2;     // predecessor row boundary (centerline of the row-gap clear band)
+  const v1 = TL.rowH / 2;                 // total drop of the exit vertical segment (down to the row gap)
+  const v2 = Math.abs(y2 - gapY);         // total drop of the vertical segment into the successor
+  const hg = Math.abs(dx);                // total horizontal distance available in the row gap
+  const r1 = Math.min(4, v1 / 2);         // exit bend: 4px label-safety cap
   const r2 = Math.max(0, Math.min(18, v1 - r1, (hg - r1) / 2));
   const r3 = Math.max(0, Math.min(18, v2 / 2, (hg - r1 - r2) / 2));
   const r4 = Math.max(0, Math.min(18, v2 - r3, hg - r1 - r2 - r3));
-  const swV = sy > 0 ? 1 : 0;             // 东 → 南/北
-  const swIn = (-sy * d) > 0 ? 1 : 0;     // 南/北 → 东/西（入行间隙 & 钩入后继同型）
-  const swOut = (sy * d) > 0 ? 1 : 0;     // 东/西 → 南/北（出行间隙）
+  const swV = sy > 0 ? 1 : 0;             // east -> south/north
+  const swIn = (-sy * d) > 0 ? 1 : 0;     // south/north -> east/west (same shape entering the row gap & hooking into the successor)
+  const swOut = (sy * d) > 0 ? 1 : 0;     // east/west -> south/north (leaving the row gap)
   return [
     `M ${x1} ${y1}`,
-    `A ${r1} ${r1} 0 0 ${swV} ${x1 + r1} ${y1 + sy * r1}`,        // 出口弯（小弧，避标签）
+    `A ${r1} ${r1} 0 0 ${swV} ${x1 + r1} ${y1 + sy * r1}`,        // exit bend (small arc, avoids the label)
     `L ${x1 + r1} ${gapY - sy * r2}`,
-    `A ${r2} ${r2} 0 0 ${swIn} ${x1 + r1 + d * r2} ${gapY}`,      // 转入行间隙（大弧）
+    `A ${r2} ${r2} 0 0 ${swIn} ${x1 + r1 + d * r2} ${gapY}`,      // turn into the row gap (large arc)
     `L ${x2 - d * (r3 + r4)} ${gapY}`,
-    `A ${r3} ${r3} 0 0 ${swOut} ${x2 - d * r4} ${gapY + sy * r3}`, // 出行间隙（大弧）
+    `A ${r3} ${r3} 0 0 ${swOut} ${x2 - d * r4} ${gapY + sy * r3}`, // leave the row gap (large arc)
     `L ${x2 - d * r4} ${y2 - sy * r4}`,
-    `A ${r4} ${r4} 0 0 ${swIn} ${x2} ${y2}`,                       // 钩入后继左缘（大弧，末端切线水平）
+    `A ${r4} ${r4} 0 0 ${swIn} ${x2} ${y2}`,                       // hook into the successor's left edge (large arc, horizontal end tangent)
   ].join(" ");
 }
 
-/* 同行依赖的 U 形浅蘸：出前置右缘下弯 → 行底净空带水平 → 上弯入后继左缘，四段圆弧无斜线 */
+/* U-shaped shallow dip for same-row dependencies: bend down off the predecessor's right edge -> horizontal along the clear band under the row -> bend up into the successor's left edge; four arcs, no diagonals */
 function sameRowBumpD(x1, y1, x2, dx) {
-  if (dx <= 0) return `M ${x1} ${y1} L ${x2} ${y1}`; // 理论不存在，兜底直连
-  const dip = dx < 24 ? TL.rowH / 2 : 11; // 间隙极小：沉到行底 17px（两横条之下）；否则浅蘸 11px
+  if (dx <= 0) return `M ${x1} ${y1} L ${x2} ${y1}`; // theoretically impossible; straight line as fallback
+  const dip = dx < 24 ? TL.rowH / 2 : 11; // tiny gap: sink to 17px below the row (under both bars); otherwise a shallow 11px dip
   const by = y1 + dip;
-  const r1 = Math.min(4, dip / 2);         // 进出弯：贴条安全上限
-  const r2 = Math.max(0, Math.min(18, dip - r1, (dx - 2 * r1) / 2)); // 底部两个大弧
+  const r1 = Math.min(4, dip / 2);         // entry/exit bends: bar-hugging safety cap
+  const r2 = Math.max(0, Math.min(18, dip - r1, (dx - 2 * r1) / 2)); // the two large bottom arcs
   return [
     `M ${x1} ${y1}`,
     `A ${r1} ${r1} 0 0 1 ${x1 + r1} ${y1 + r1}`,     // E→S
     `L ${x1 + r1} ${by - r2}`,
-    `A ${r2} ${r2} 0 0 0 ${x1 + r1 + r2} ${by}`,     // S→E（大弧）
+    `A ${r2} ${r2} 0 0 0 ${x1 + r1 + r2} ${by}`,     // S->E (large arc)
     `L ${x2 - r1 - r2} ${by}`,
-    `A ${r2} ${r2} 0 0 0 ${x2 - r1} ${by - r2}`,     // E→N（大弧）
+    `A ${r2} ${r2} 0 0 0 ${x2 - r1} ${by - r2}`,     // E->N (large arc)
     `L ${x2 - r1} ${y1 + r1}`,
     `A ${r1} ${r1} 0 0 1 ${x2} ${y1}`,               // N→E
   ].join(" ");
@@ -1797,13 +1800,13 @@ function buildDepArrows(barPos, totalW, totalH) {
   return svg;
 }
 
-/* ================= 日历视图 ================= */
-/* 日历拖拽落点统一处理：有 start_on 的任务按「落点 − 抓取段日期」的天数整体平移 start+due；
-   无 start_on 的单日任务只改 due_on（行为同旧版）。 */
+/* ================= calendar view ================= */
+/* Unified handling of calendar drop targets: tasks with start_on shift start+due as a whole by (drop date - grabbed segment date) days;
+   single-day tasks without start_on only change due_on (same behavior as the old version). */
 function moveCalTask(t, fromDate, toDate) {
   if (!toDate || toDate === fromDate) return;
   if (!t.due_on) {
-    // 只有 start_on 没有 due_on 的任务（日历里本不显示，从外部拖入时）：落到哪格 due 就是哪格
+    // tasks with start_on but no due_on (normally not shown in the calendar; dragged in from outside): due becomes whichever cell they land on
     updateTask(t.id, { due_on: toDate });
     return;
   }
@@ -1854,11 +1857,11 @@ function renderCalendar(container) {
   }
 
   const first = new Date(state.calYear, state.calMonth, 1);
-  const startOffset = (first.getDay() + 6) % 7; // 周一起
+  const startOffset = (first.getDay() + 6) % 7; // week starts on Monday
   const gridStart = addDays(first, -startOffset);
-  // 跨天任务（start_on 且 start<due）：开始日到截止日每天都落一个段，
-  // 相邻格的段用 CSS 连成连续横条（跨周在周行内截断续接，像 Google Calendar）
-  const byDate = new Map(); // dateKey -> [{task, seg}]；seg: null=单日条目 | {first,last}=跨天段
+  // multi-day tasks (start_on and start<due): one segment lands on each day from start to due,
+  // segments in adjacent cells are joined by CSS into a continuous bar (split and rejoined at week boundaries, like Google Calendar)
+  const byDate = new Map(); // dateKey -> [{task, seg}]; seg: null=single-day entry | {first,last}=multi-day segment
   for (const t of state.tasks) {
     if (!t.due_on) continue;
     if (t.start_on && t.start_on < t.due_on) {
@@ -1868,7 +1871,7 @@ function renderCalendar(container) {
         byDate.get(k).push({ task: t, seg: { first: k === t.start_on, last: k === t.due_on } });
       }
     } else {
-      // 只有 due_on，或 start_on == due_on：单日条目，行为不变
+      // only due_on, or start_on == due_on: single-day entry, behavior unchanged
       if (!byDate.has(t.due_on)) byDate.set(t.due_on, []);
       byDate.get(t.due_on).push({ task: t, seg: null });
     }
@@ -1876,13 +1879,13 @@ function renderCalendar(container) {
 
   const td = today();
   const isMobile = window.matchMedia("(max-width: 768px)").matches;
-  const CAL_ITEM_LIMIT = isMobile ? 2 : Infinity; // 移动端每格最多显示 2 条 + 「+N 更多」
+  const CAL_ITEM_LIMIT = isMobile ? 2 : Infinity; // mobile shows at most 2 items per cell + a "+N more" link
   for (let i = 0; i < 42; i++) {
     const day = addDays(gridStart, i);
     const key = fmtDate(day);
     const cell = document.createElement("div");
     cell.className = "cal-cell";
-    cell.dataset.date = key; // 供触屏拖拽落点使用
+    cell.dataset.date = key; // used as the touch-drag drop target
     if (day.getMonth() !== state.calMonth) cell.classList.add("other-month");
     if (fmtDate(day) === fmtDate(td)) cell.classList.add("today");
     const num = document.createElement("span");
@@ -1891,17 +1894,17 @@ function renderCalendar(container) {
     cell.appendChild(num);
 
     const dayEntries = (byDate.get(key) || []).sort((a, b) => {
-      if (!!a.seg !== !!b.seg) return a.seg ? -1 : 1; // 跨天段排在单日条目前面
+      if (!!a.seg !== !!b.seg) return a.seg ? -1 : 1; // multi-day segments sort before single-day entries
       return a.task.order - b.task.order;
     });
-    const col = i % 7; // 0=周一 … 6=周日；跨周处必须截断续接
+    const col = i % 7; // 0=Mon ... 6=Sun; must split and rejoin at week boundaries
     const makeItem = entry => {
       const t = entry.task;
       const item = document.createElement("div");
       item.className = "cal-item" + (t.completed ? " task-done" : "");
       if (entry.seg) {
-        // 跨天段：周行内相接处去圆角 + 负 margin 桥接格缝（ext-l/ext-r）；
-        // 任务名在第一段及每周首段重复显示，其余段占位保持行高
+        // multi-day segments: adjoining ends within a week row lose their rounding and bridge the cell gap with negative margins (ext-l/ext-r);
+        // the task name repeats on the first segment and on each week's first segment; other segments keep row height as placeholders
         const roundL = entry.seg.first || col === 0;
         const roundR = entry.seg.last || col === 6;
         item.classList.add("cal-span", roundL ? "sp-l" : "ext-l", roundR ? "sp-r" : "ext-r");
@@ -1911,7 +1914,7 @@ function renderCalendar(container) {
         item.textContent = t.name;
         item.title = t.name + (t.assignee ? " · " + t.assignee : "");
       }
-      // 整个色块按 Category 着色（与看板 .pill 一致：实心主题色 + 白字）；跨天各段同样着色
+      // the whole block is colored by Category (consistent with board .pill: solid theme color + white text); multi-day segments are colored the same
       if (t.category) {
         item.classList.add("cal-cat");
         item.style.background = catColor(t.category);
@@ -1920,10 +1923,10 @@ function renderCalendar(container) {
       item.addEventListener("click", () => { if (!clickSuppressed()) openDetail(t.id); });
       item.addEventListener("dragstart", e => {
         e.dataTransfer.setData("text/task-id", t.id);
-        e.dataTransfer.setData("text/cal-grab-date", key); // 记录抓住的是哪一段，落点按相差天数整体平移
+        e.dataTransfer.setData("text/cal-grab-date", key); // remember which segment was grabbed; the drop shifts the whole task by the day difference
         e.dataTransfer.effectAllowed = "move";
       });
-      // 触屏：长按 400ms 拖到其他日期格子（等待期移动 >15px 视为滚动取消）
+      // touch: long-press 400ms, then drag to another date cell (movement >15px during the wait cancels as scroll)
       attachTouchDrag(item, {
         pressDelay: 400,
         cancelThreshold: 15,
@@ -1977,7 +1980,7 @@ function renderCalendar(container) {
   container.appendChild(grid);
 }
 
-/* ================= 详情面板 ================= */
+/* ================= detail panel ================= */
 function openDetail(id) {
   state.detailId = id;
   renderDetail();
@@ -2017,7 +2020,7 @@ function renderDetail() {
   const body = $("#detail-body");
   body.innerHTML = "";
 
-  // 标题行：勾选 + 名称
+  // title row: checkbox + name
   const titleRow = document.createElement("div");
   titleRow.className = "detail-title-row";
   titleRow.appendChild(makeCheckbox(t));
@@ -2038,19 +2041,19 @@ function renderDetail() {
   })()));
 
   body.appendChild(detailRow("负责人", textInput(t.assignee, v => updateTask(t.id, { assignee: v }), { list: "dl-assignees" })));
-  // 日期：iOS 空日期框首点系统自动填今天，pointerdown 时先预填以避免「第一次点被提交并收起」
+  // dates: iOS auto-fills today on the first tap of an empty date input; pre-fill on pointerdown to avoid "first tap commits and closes"
   const startInp = textInput(t.start_on || "", v => updateTask(t.id, { start_on: v || null }), { type: "date" });
   const dueInp = textInput(t.due_on || "", v => updateTask(t.id, { due_on: v || null }), { type: "date" });
   fixIOSDateInput(startInp);
   fixIOSDateInput(dueInp);
   body.appendChild(detailRow("开始日期", startInp));
   body.appendChild(detailRow("截止日期", dueInp));
-  // Category / Effort / Priority：select + 自定义（datalist 在 iOS 不可用）
+  // Category / Effort / Priority: select + custom (datalist unusable on iOS)
   body.appendChild(detailRow("Category", makeSelectOrCustom({ field: "category", value: t.category, onCommit: v => updateTask(t.id, { category: v }) })));
   body.appendChild(detailRow("Effort", makeSelectOrCustom({ field: "effort", value: t.effort, onCommit: v => updateTask(t.id, { effort: v }) })));
   body.appendChild(detailRow("Priority", makeSelectOrCustom({ field: "priority", value: t.priority, onCommit: v => updateTask(t.id, { priority: v }) })));
 
-  // 前置依赖（多选）
+  // dependencies (multi-select)
   const depBox = document.createElement("div");
   depBox.className = "dep-list";
   const depSet = new Set(t.dependencies || []);
@@ -2095,7 +2098,7 @@ function renderDetail() {
   body.appendChild(actions);
 }
 
-/* ================= 初始化 ================= */
+/* ================= init ================= */
 function showLogin(msg) {
   const ov = $("#login-overlay");
   ov.classList.remove("hidden");
@@ -2109,7 +2112,7 @@ function hideLogin() {
 }
 
 function init() {
-  // 登录页跳转带来的 ?token=：存入 localStorage 并清理地址栏
+  // ?token= brought in by the login page redirect: store in localStorage and clean the address bar
   const urlTok = new URLSearchParams(location.search).get("token");
   if (urlTok) {
     setToken(urlTok);
@@ -2120,14 +2123,14 @@ function init() {
     state.view = b.dataset.view;
     render();
   }));
-  // 「＋ 分组」改为内联创建器（替代 prompt）
+  // the "＋ 分组" button becomes an inline creator (replaces prompt)
   $("#btn-new-section").replaceWith(makeInlineCreator({
     buttonLabel: "＋ 分组",
     buttonClass: "creator-btn-bordered",
     placeholder: "新分组名称",
     onSubmit: name => addSection(name),
   }));
-  // 侧边栏「＋ 新建项目」内联创建器
+  // sidebar "＋ 新建项目" inline creator
   projectCreatorEl = makeInlineCreator({
     buttonLabel: "＋ 新建项目",
     buttonClass: "creator-btn-sidebar",
@@ -2138,11 +2141,11 @@ function init() {
   $("#detail-close").addEventListener("click", closeDetail);
   document.addEventListener("keydown", e => {
     if (e.key !== "Escape") return;
-    clearTLSelect(); // 时间线多选：Esc 清空
+    clearTLSelect(); // timeline multi-select: Esc clears
     if (state.detailId) closeDetail();
   });
 
-  // 移动端抽屉菜单
+  // mobile drawer menu
   const sidebar = $("#sidebar"), backdrop = $("#sidebar-backdrop");
   function closeMenu() { sidebar.classList.remove("open"); backdrop.classList.add("hidden"); }
   $("#btn-menu").addEventListener("click", () => {
@@ -2153,13 +2156,13 @@ function init() {
   backdrop.addEventListener("click", closeMenu);
   $$("#sidebar .nav-item").forEach(n => n.addEventListener("click", closeMenu));
 
-  // 退出登录：清除 token 并回到 /（服务端将返回登录页）
+  // logout: clear the token and go back to / (the server will return the login page)
   $("#btn-logout").addEventListener("click", () => {
     clearToken();
     location.href = "/";
   });
 
-  // 登录遮罩提交：保存 token 并尝试加载数据
+  // login overlay submit: save the token and try loading data
   $("#login-form").addEventListener("submit", async e => {
     e.preventDefault();
     const t = $("#login-token").value.trim();
@@ -2175,7 +2178,7 @@ function init() {
   });
 
   if (!getToken()) {
-    // 无 token：先尝试无认证访问（--no-auth 模式可直接进入），401 时显示登录遮罩
+    // no token: try unauthenticated access first (--no-auth mode lets you straight in); show the login overlay on 401
     boot().then(render).catch(e => {
       if (e.message !== "unauthorized") {
         $("#view-container").innerHTML = `<div class="tl-empty-hint">加载失败: ${esc(e.message)}</div>`;

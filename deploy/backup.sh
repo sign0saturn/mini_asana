@@ -1,6 +1,6 @@
 #!/bin/bash
-# mini-asana 数据备份：打包 projects.json + projects/ 到 data/backups/，保留最新 8 份
-# （多项目版：2026-07-27 起数据为分项目文件布局；兼容旧版单文件 tasks.json）
+# mini-asana data backup: archive projects.json + projects/ into data/backups/, keep the latest 8
+# (multi-project: since 2026-07-27 data uses per-project files; falls back to legacy single-file tasks.json)
 set -e
 DATA="$HOME/mini-asana/data"
 DIR="$DATA/backups"

@@ -1,159 +1,161 @@
 # mini-asana
 
-单机版简易 Asana —— 一个跑在自己电脑上的个人项目/装修任务追踪器。纯 Python 标准库后端 + 原生 JS 前端，无第三方依赖、无构建步骤，clone 下来即可运行。
+A self-hosted, single-machine mini Asana — a personal project / home-improvement task tracker that runs on your own computer. Pure Python standard-library backend + vanilla JS frontend. No third-party dependencies, no build step: clone and run.
 
-## 特性
+## Features
 
-- **多项目**：左侧边栏新建 / 切换 / 重命名 / 删除项目，数据按项目分文件存储（`data/projects/`）
-- **四种视图**：列表 / 看板 / 时间线（甘特）/ 日历，左侧边栏切换
-- **列表**：行内编辑各字段（负责人、截止日期、Category、Effort、Priority）、拖拽排序与跨组移动、勾选完成
-- **看板**：卡片拖拽跨列、列内排序
-- **时间线**：横条拖拽改起止日期、边缘拖拽调整长度、依赖关系箭头连线（正交路由大圆弧弯）、跨天横条、单日横条、Shift/Cmd/Ctrl 多选批量平移（桌面端）、任务名标签自动避让
-- **日历**：按月视图，跨天任务显示为连续横条，拖拽改日期（跨天任务整体平移）
-- **Category 着色**：日历色块与时间线横条按 Category 自动配色，全视图一致
-- **移动端适配**：响应式布局，触屏长按拖拽、底部弹出详情面板
-- **任务详情面板**：分组、负责人、起止日期、Category/Effort/Priority、前置依赖多选、备注、链接
-- **token 访问认证**（默认开启，可关闭），为公网暴露场景准备
+- **Multi-project**: create / switch / rename / delete projects in the left sidebar; data is stored in per-project files (`data/projects/`)
+- **Four views**: list / board / timeline (Gantt) / calendar, switchable in the sidebar
+- **List**: inline editing of every field (assignee, due date, Category, Effort, Priority), drag to reorder and move across sections, checkbox completion
+- **Board**: drag cards across columns and within a column
+- **Timeline**: drag bars to change start/due dates, drag edges to resize, dependency arrows (orthogonal routing with large rounded bends), multi-day and single-day bars, Shift/Cmd/Ctrl multi-select batch shifting (desktop), automatic task-name label placement
+- **Calendar**: month view; multi-day tasks render as continuous bars; drag to reschedule (multi-day tasks shift as a whole)
+- **Category coloring**: calendar blocks and timeline bars are auto-colored by Category, consistent across all views
+- **Mobile support**: responsive layout, touch long-press dragging, bottom-sheet detail panel
+- **Task detail panel**: section, assignee, start/due dates, Category/Effort/Priority, multi-select dependencies, notes, link
+- **Token access auth** (on by default, can be disabled) for public-exposure scenarios
 
-## 快速开始
+Note: the app UI is currently in Chinese.
 
-要求：Python 3.7+（只用标准库），无需 pip install。
+## Quick start
+
+Requires Python 3.7+ (standard library only); nothing to pip install.
 
 ```bash
-# 启动（默认监听 127.0.0.1:8787）
+# start (listens on 127.0.0.1:8787 by default)
 python3 server.py
 ```
 
-首次启动会自动创建默认项目（Default Project，含 To do / In progress 两个分组），无需准备数据文件。
+On first start a default project (Default Project, with To do / In progress sections) is created automatically — no data file preparation needed.
 
-浏览器打开 `http://127.0.0.1:8787`。
+Open `http://127.0.0.1:8787` in your browser.
 
-### 认证（默认开启）
+### Auth (enabled by default)
 
-- **首次启动自动生成** 32 位十六进制 token，写入 `data/auth_token.txt`（文件权限 600），终端会打印提示；之后启动直接读取该文件。
-- 浏览器访问会先看到登录页，输入 token 进入（token 存 localStorage，下次自动带）。
-- 程序访问用两种方式之一携带 token：
-  - 请求头 `Authorization: Bearer <token>`
-  - query 参数 `?token=<token>`
-- 无 token：API 返回 `401 {"error":"unauthorized"}`，页面请求返回登录页。
-- **关闭认证**（仅限本机开发）：`python3 server.py --no-auth`，或环境变量 `MINI_ASANA_NO_AUTH=1`。
-- **修改端口**：`python3 server.py --port 9000`，或环境变量 `MINI_ASANA_PORT=9000`（默认 8787）。
-- 想自己指定 token：启动前把目标 token 写入 `data/auth_token.txt` 即可（一行文本）。
+- **On first start** a 32-char hex token is generated into `data/auth_token.txt` (file mode 600) with a notice printed to the terminal; later starts read the file as-is.
+- The browser shows a login page first; enter the token to continue (stored in localStorage, sent automatically afterwards).
+- Programmatic access carries the token in one of two ways:
+  - `Authorization: Bearer <token>` request header
+  - `?token=<token>` query parameter
+- Without a token: API requests get `401 {"error":"unauthorized"}`; page requests get the login page.
+- **Disable auth** (local development only): `python3 server.py --no-auth`, or env var `MINI_ASANA_NO_AUTH=1`.
+- **Change port**: `python3 server.py --port 9000`, or env var `MINI_ASANA_PORT=9000` (default 8787).
+- To use your own token: write it into `data/auth_token.txt` (a single line of text) before starting.
 
-也可以 `./start.sh` 启动（等价于 `python3 server.py`，认证开启）。
+You can also start with `./start.sh` (equivalent to `python3 server.py`, auth enabled).
 
 ### REST API
 
-项目：
+Projects:
 
 ```
 GET    /api/projects                      -> {"projects": [{"id","name","task_count"}, ...]}
-POST   /api/projects                      新建项目 {"name": str}
-GET    /api/projects/<pid>                项目详情
-PATCH  /api/projects/<pid>                重命名项目 {"name": str}
-DELETE /api/projects/<pid>                删除项目（最后一个项目不可删）
+POST   /api/projects                      create project {"name": str}
+GET    /api/projects/<pid>                project detail
+PATCH  /api/projects/<pid>                rename project {"name": str}
+DELETE /api/projects/<pid>                delete project (the last remaining project cannot be deleted)
 ```
 
-项目作用域内的任务 / 分组（`<pid>` 为项目 id）：
+Tasks / sections within a project scope (`<pid>` is the project id):
 
 ```
 GET    /api/projects/<pid>/tasks              -> {"project","sections","tasks"}
-POST   /api/projects/<pid>/tasks              创建任务 (JSON body)
-PUT    /api/projects/<pid>/tasks/<id>         更新任务字段（部分更新）
-DELETE /api/projects/<pid>/tasks/<id>         删除任务
-POST   /api/projects/<pid>/sections           新增分组 {"name": str}
-PUT    /api/projects/<pid>/sections/<name>    重命名分组 {"name": new_name}
-DELETE /api/projects/<pid>/sections/<name>    删除分组（其任务移到第一个剩余分组）
-POST   /api/projects/<pid>/reorder            {"section": str, "ids": [task_id, ...]} 重排分组内顺序
+POST   /api/projects/<pid>/tasks              create task (JSON body)
+PUT    /api/projects/<pid>/tasks/<id>         update task fields (partial update)
+DELETE /api/projects/<pid>/tasks/<id>         delete task
+POST   /api/projects/<pid>/sections           add section {"name": str}
+PUT    /api/projects/<pid>/sections/<name>    rename section {"name": new_name}
+DELETE /api/projects/<pid>/sections/<name>    delete section (its tasks move to the first remaining section)
+POST   /api/projects/<pid>/reorder            {"section": str, "ids": [task_id, ...]} reorder within a section
 ```
 
-旧版单项目路径（`/api/tasks`、`/api/sections`、`/api/reorder` 等）仍可用，自动作用于索引中的第一个项目。
+Legacy single-project paths (`/api/tasks`, `/api/sections`, `/api/reorder`, etc.) still work and apply to the first (oldest) project in the index.
 
-所有写操作原子化持久化到对应项目的 `data/projects/<pid>.json`。
+All writes are atomically persisted to the corresponding project's `data/projects/<pid>.json`.
 
-## 数据存储
+## Data storage
 
-- `data/projects.json`：项目索引 `{"projects": [{"id","name"}, ...]}`，数组顺序即侧边栏项目顺序。
-- `data/projects/<id>.json`：每个项目一个数据文件 `{"project","sections","tasks"}`；写操作先落 `.tmp` 再 `os.replace` 原子替换。
-- 全新安装：启动时自动创建默认项目。
-- 从旧版（单文件）升级：启动时检测到旧版 `data/tasks.json` 会自动迁移为第一个项目，原文件改名 `data/tasks.json.migrated`，不丢数据；确认迁移无误后可自行删除该备份文件。
+- `data/projects.json`: project index `{"projects": [{"id","name"}, ...]}`; array order = sidebar project order.
+- `data/projects/<id>.json`: one data file per project `{"project","sections","tasks"}`; writes go to a `.tmp` file first, then `os.replace` swaps it in atomically.
+- Fresh install: a default project is created automatically on start.
+- Upgrading from the legacy (single-file) version: on start, a legacy `data/tasks.json` is auto-migrated into the first project and the original file is renamed `data/tasks.json.migrated` — no data is lost; you can delete that backup file once you've verified the migration.
 
-## 从 Asana 迁移
+## Importing from Asana
 
-1. 从 Asana 导出任务数据，整理为中文键 JSON（数组），字段包括：`gid`、`任务名称`、`分组`、`负责人`、`开始日期`、`截止日期`、`已完成`（"是"/""）、`Category`、`Effort`、`Priority`、`前置依赖`（任务名，以 `;` 分隔）、`任务链接`。
-2. 把该文件命名为 `asana_tasks_full.json`，放在**项目目录的上一级**（convert.py 读取 `../asana_tasks_full.json`）。
-3. 运行 `python3 convert.py`，生成 `data/tasks.json`；无法解析的依赖名会以 WARN 打到 stderr。
-4. 启动 server：生成的旧版单文件会在首次启动时按上节所述自动迁移为第一个项目。
+1. Export your tasks from Asana and shape them into a Chinese-keyed JSON array with fields: `gid`, `任务名称`, `分组`, `负责人`, `开始日期`, `截止日期`, `已完成` ("是"/""), `Category`, `Effort`, `Priority`, `前置依赖` (task names, `;`-separated), `任务链接`.
+2. Name the file `asana_tasks_full.json` and place it **one level above the project directory** (convert.py reads `../asana_tasks_full.json`).
+3. Run `python3 convert.py` to generate `data/tasks.json`; unresolvable dependency names are printed to stderr as WARN lines.
+4. Start the server: the generated legacy single file is auto-migrated into the first project on first start, as described above.
 
-## 目录结构
+## Directory layout
 
 ```
 mini-asana/
-├── server.py            # 后端：REST API + 静态文件 + token 认证（纯标准库）
-├── start.sh             # 便捷启动脚本
-├── convert.py           # Asana 导出 JSON -> data/tasks.json 转换器
+├── server.py            # backend: REST API + static files + token auth (stdlib only)
+├── start.sh             # convenience start script
+├── convert.py           # Asana export JSON -> data/tasks.json converter
 ├── static/
-│   ├── index.html       # SPA 入口
-│   ├── app.js           # 前端全部逻辑（原生 JS，无构建）
+│   ├── index.html       # SPA entry
+│   ├── app.js           # all frontend logic (vanilla JS, no build)
 │   └── style.css
-├── data/                # 运行后生成（gitignore，不入库）
-│   ├── projects.json    # 项目索引
-│   ├── projects/        # 每个项目一个 <id>.json
-│   └── auth_token.txt   # 访问 token
-└── deploy/              # 可选：macOS 常驻与公网暴露
-    ├── local.miniasana.plist           # 应用本体常驻
-    ├── local.miniasana-tunnel.plist    # cloudflared 隧道常驻
-    ├── local.miniasana-backup.plist    # 每日备份（03:17）
-    ├── local.miniasana-watchdog.plist  # 隧道看门狗（每 120s）
+├── data/                # generated at runtime (gitignored)
+│   ├── projects.json    # project index
+│   ├── projects/        # one <id>.json per project
+│   └── auth_token.txt   # access token
+└── deploy/              # optional: macOS persistence & public exposure
+    ├── local.miniasana.plist           # app persistence
+    ├── local.miniasana-tunnel.plist    # cloudflared tunnel persistence
+    ├── local.miniasana-backup.plist    # daily backup (03:17)
+    ├── local.miniasana-watchdog.plist  # tunnel watchdog (every 120s)
     ├── backup.sh
     └── watchdog.sh
 ```
 
-## 部署（可选）
+## Deployment (optional)
 
-### macOS launchd 常驻
+### macOS launchd persistence
 
-`deploy/` 下的 4 个 plist 假设项目放在 `~/mini-asana`，且 `backup.sh` / `watchdog.sh` 已复制到 `~/mini-asana/` 下（plist 按该路径引用）：
+The 4 plists under `deploy/` assume the project lives at `~/mini-asana`, and that `backup.sh` / `watchdog.sh` have been copied to `~/mini-asana/` (the plists reference that path):
 
 ```bash
-# 1) 替换占位用户名（也可以直接手动编辑）
+# 1) replace the placeholder username (or edit by hand)
 sed -i '' 's/YOUR_USERNAME/'"$(whoami)"'/g' deploy/*.plist
 
-# 2) 安装并加载
+# 2) install and load
 cp deploy/local.miniasana*.plist ~/Library/LaunchAgents/
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.miniasana.plist
-# 隧道/备份/看门狗按需同样 bootstrap
+# bootstrap the tunnel/backup/watchdog plists as needed
 ```
 
-### cloudflared 命名隧道暴露到公网
+### Exposing via a cloudflared named tunnel
 
-仓库中的 tunnel plist 是快速隧道（`--url`）示例；生产建议用命名隧道：
+The tunnel plist in this repo is a quick-tunnel (`--url`) example; a named tunnel is recommended for production:
 
 ```bash
 cloudflared tunnel login
-cloudflared tunnel create <隧道名>
-# 编辑 ~/.cloudflared/config.yml：
-#   tunnel: <隧道ID>
-#   credentials-file: /Users/YOUR_USERNAME/.cloudflared/<隧道ID>.json
+cloudflared tunnel create <tunnel-name>
+# edit ~/.cloudflared/config.yml:
+#   tunnel: <tunnel-id>
+#   credentials-file: /Users/YOUR_USERNAME/.cloudflared/<tunnel-id>.json
 #   ingress:
-#     - hostname: <你的域名>
+#     - hostname: <your-domain>
 #       service: http://localhost:8787
 #     - service: http_status:404
-cloudflared tunnel route dns <隧道名> <你的域名>
-# 常驻：把 tunnel plist 的参数改为 cloudflared tunnel run <隧道名> 再 bootstrap
+cloudflared tunnel route dns <tunnel-name> <your-domain>
+# persistence: change the tunnel plist's arguments to cloudflared tunnel run <tunnel-name>, then bootstrap
 ```
 
-公网暴露时**务必保持认证开启**（默认），token 见 `data/auth_token.txt`。
+When exposing publicly, **keep auth enabled** (the default); the token is in `data/auth_token.txt`.
 
-### 每日备份与隧道看门狗
+### Daily backup and tunnel watchdog
 
-- `backup.sh`：把任务数据打包到 `data/backups/`，保留最新 8 份；配合 backup plist 每日 03:17 执行。多项目布局下备份 `data/projects.json` 与 `data/projects/`（tar.gz），也兼容旧版单文件 `data/tasks.json`。
-- `watchdog.sh`：每 2 分钟检测域名是否被 Cloudflare 边缘正常服务（先 DoH 取真实边缘 IP 再直连，规避 fake-ip DNS），连续 2 次失败自动 kickstart 隧道服务。两个关键参数可用环境变量覆盖：
-  - `WATCHDOG_DOMAIN`：监控的域名（默认 `your-domain.example.com`，必须改）
-  - `WATCHDOG_TUNNEL_LABEL`：隧道服务 label（默认 `local.miniasana-tunnel`）
+- `backup.sh`: archives task data into `data/backups/`, keeping the latest 8; with the backup plist it runs daily at 03:17. Multi-project layout: packs `data/projects.json` + `data/projects/` into a `.tar.gz`; falls back to copying the legacy single-file `data/tasks.json` when present.
+- `watchdog.sh`: every 2 minutes, checks whether your domain is properly served by Cloudflare edge (resolves the real edge IP via DoH first, then connects directly — avoiding fake-ip DNS interference); after 2 consecutive failures it kickstarts the tunnel service. Two key parameters can be overridden via environment variables:
+  - `WATCHDOG_DOMAIN`: domain to monitor (default `your-domain.example.com` — must be changed)
+  - `WATCHDOG_TUNNEL_LABEL`: launchd Label of the tunnel service (default `local.miniasana-tunnel`)
 
-## 技术要点
+## Tech notes
 
-- **零依赖**：后端仅 Python 标准库（`http.server` 多线程、原子写 JSON、token 认证）；前端原生 HTML/CSS/JS，无 npm 无构建，改完刷新即生效
-- 数据即文件：按项目分文件存储（`data/projects/<id>.json` + `data/projects.json` 索引），写操作先落 `.tmp` 再 `os.replace` 原子替换
-- 时间线坐标换算、依赖连线路径规划、触屏长按拖拽（Pointer Events）均在前端手写实现
+- **Zero dependencies**: the backend uses only the Python standard library (threaded `http.server`, atomic JSON writes, token auth); the frontend is vanilla HTML/CSS/JS with no npm and no build — edit and refresh
+- Data as files: per-project storage (`data/projects/<id>.json` + `data/projects.json` index); writes go to `.tmp` first, then `os.replace` atomically
+- Timeline coordinate math, dependency-arrow path planning, and touch long-press dragging (Pointer Events) are all hand-rolled in the frontend
