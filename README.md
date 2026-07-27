@@ -4,6 +4,7 @@
 
 ## 特性
 
+- **多项目**：左侧边栏新建 / 切换 / 重命名 / 删除项目，数据按项目分文件存储（`data/projects/`）
 - **四种视图**：列表 / 看板 / 时间线（甘特）/ 日历，左侧边栏切换
 - **列表**：行内编辑各字段（负责人、截止日期、Category、Effort、Priority）、拖拽排序与跨组移动、勾选完成
 - **看板**：卡片拖拽跨列、列内排序
@@ -19,12 +20,11 @@
 要求：Python 3.7+（只用标准库），无需 pip install。
 
 ```bash
-# 1) 准备数据文件（server 启动时要求 data/tasks.json 必须存在）
-cp data/tasks.json.example data/tasks.json
-
-# 2) 启动（默认监听 127.0.0.1:8787）
+# 启动（默认监听 127.0.0.1:8787）
 python3 server.py
 ```
+
+首次启动会自动创建默认项目（Default Project，含 To do / In progress 两个分组），无需准备数据文件。
 
 浏览器打开 `http://127.0.0.1:8787`。
 
@@ -44,24 +44,46 @@ python3 server.py
 
 ### REST API
 
+项目：
+
 ```
-GET    /api/tasks                 -> {"sections": [...], "tasks": [...]}
-POST   /api/tasks                 创建任务 (JSON body)
-PUT    /api/tasks/<id>            更新任务字段（部分更新）
-DELETE /api/tasks/<id>            删除任务
-POST   /api/sections              新增分组 {"name": str}
-PUT    /api/sections/<name>       重命名分组 {"name": new_name}
-DELETE /api/sections/<name>       删除分组（其任务移到第一个剩余分组）
-POST   /api/reorder               {"section": str, "ids": [task_id, ...]} 重排分组内顺序
+GET    /api/projects                      -> {"projects": [{"id","name","task_count"}, ...]}
+POST   /api/projects                      新建项目 {"name": str}
+GET    /api/projects/<pid>                项目详情
+PATCH  /api/projects/<pid>                重命名项目 {"name": str}
+DELETE /api/projects/<pid>                删除项目（最后一个项目不可删）
 ```
 
-所有写操作原子化持久化到 `data/tasks.json`。
+项目作用域内的任务 / 分组（`<pid>` 为项目 id）：
+
+```
+GET    /api/projects/<pid>/tasks              -> {"project","sections","tasks"}
+POST   /api/projects/<pid>/tasks              创建任务 (JSON body)
+PUT    /api/projects/<pid>/tasks/<id>         更新任务字段（部分更新）
+DELETE /api/projects/<pid>/tasks/<id>         删除任务
+POST   /api/projects/<pid>/sections           新增分组 {"name": str}
+PUT    /api/projects/<pid>/sections/<name>    重命名分组 {"name": new_name}
+DELETE /api/projects/<pid>/sections/<name>    删除分组（其任务移到第一个剩余分组）
+POST   /api/projects/<pid>/reorder            {"section": str, "ids": [task_id, ...]} 重排分组内顺序
+```
+
+旧版单项目路径（`/api/tasks`、`/api/sections`、`/api/reorder` 等）仍可用，自动作用于索引中的第一个项目。
+
+所有写操作原子化持久化到对应项目的 `data/projects/<pid>.json`。
+
+## 数据存储
+
+- `data/projects.json`：项目索引 `{"projects": [{"id","name"}, ...]}`，数组顺序即侧边栏项目顺序。
+- `data/projects/<id>.json`：每个项目一个数据文件 `{"project","sections","tasks"}`；写操作先落 `.tmp` 再 `os.replace` 原子替换。
+- 全新安装：启动时自动创建默认项目。
+- 从旧版（单文件）升级：启动时检测到旧版 `data/tasks.json` 会自动迁移为第一个项目，原文件改名 `data/tasks.json.migrated`，不丢数据；确认迁移无误后可自行删除该备份文件。
 
 ## 从 Asana 迁移
 
 1. 从 Asana 导出任务数据，整理为中文键 JSON（数组），字段包括：`gid`、`任务名称`、`分组`、`负责人`、`开始日期`、`截止日期`、`已完成`（"是"/""）、`Category`、`Effort`、`Priority`、`前置依赖`（任务名，以 `;` 分隔）、`任务链接`。
 2. 把该文件命名为 `asana_tasks_full.json`，放在**项目目录的上一级**（convert.py 读取 `../asana_tasks_full.json`）。
 3. 运行 `python3 convert.py`，生成 `data/tasks.json`；无法解析的依赖名会以 WARN 打到 stderr。
+4. 启动 server：生成的旧版单文件会在首次启动时按上节所述自动迁移为第一个项目。
 
 ## 目录结构
 
@@ -74,9 +96,10 @@ mini-asana/
 │   ├── index.html       # SPA 入口
 │   ├── app.js           # 前端全部逻辑（原生 JS，无构建）
 │   └── style.css
-├── data/
-│   ├── tasks.json.example  # 空项目骨架（复制为 tasks.json 后启动）
-│   └── tasks.json          # 真实数据（gitignore，不入库）
+├── data/                # 运行后生成（gitignore，不入库）
+│   ├── projects.json    # 项目索引
+│   ├── projects/        # 每个项目一个 <id>.json
+│   └── auth_token.txt   # 访问 token
 └── deploy/              # 可选：macOS 常驻与公网暴露
     ├── local.miniasana.plist           # 应用本体常驻
     ├── local.miniasana-tunnel.plist    # cloudflared 隧道常驻
@@ -124,7 +147,7 @@ cloudflared tunnel route dns <隧道名> <你的域名>
 
 ### 每日备份与隧道看门狗
 
-- `backup.sh`：复制 `data/tasks.json` 到 `data/backups/`，保留最新 8 份；配合 backup plist 每日 03:17 执行。
+- `backup.sh`：复制任务数据到 `data/backups/`，保留最新 8 份；配合 backup plist 每日 03:17 执行。脚本按旧版单文件布局备份 `data/tasks.json`；多项目布局下请把源路径改为整个 `data/projects/` 目录与 `data/projects.json`。
 - `watchdog.sh`：每 2 分钟检测域名是否被 Cloudflare 边缘正常服务（先 DoH 取真实边缘 IP 再直连，规避 fake-ip DNS），连续 2 次失败自动 kickstart 隧道服务。两个关键参数可用环境变量覆盖：
   - `WATCHDOG_DOMAIN`：监控的域名（默认 `your-domain.example.com`，必须改）
   - `WATCHDOG_TUNNEL_LABEL`：隧道服务 label（默认 `local.miniasana-tunnel`）
@@ -132,5 +155,5 @@ cloudflared tunnel route dns <隧道名> <你的域名>
 ## 技术要点
 
 - **零依赖**：后端仅 Python 标准库（`http.server` 多线程、原子写 JSON、token 认证）；前端原生 HTML/CSS/JS，无 npm 无构建，改完刷新即生效
-- 数据即文件：`data/tasks.json` 单文件存储，写操作先落 `.tmp` 再 `os.replace` 原子替换
+- 数据即文件：按项目分文件存储（`data/projects/<id>.json` + `data/projects.json` 索引），写操作先落 `.tmp` 再 `os.replace` 原子替换
 - 时间线坐标换算、依赖连线路径规划、触屏长按拖拽（Pointer Events）均在前端手写实现

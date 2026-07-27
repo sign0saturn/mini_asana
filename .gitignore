@@ -1,6 +1,10 @@
 # 真实数据与密钥不入库
 data/tasks.json
+data/tasks.json.migrated
+data/projects.json
+data/projects/
 data/auth_token.txt
 data/backups/
+__pycache__/
 *.log
 .DS_Store

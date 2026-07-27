@@ -28,6 +28,19 @@ input, textarea, select { font-family: inherit; font-size: 13px; }
 .nav-item:hover { background: var(--hover); }
 .nav-item.active { background: #eceae9; font-weight: 600; }
 .project-item { font-size: 13px; }
+/* ---------- 侧边栏项目列表（多项目） ---------- */
+#project-list { display: flex; flex-direction: column; gap: 2px; }
+.project-item { display: flex; align-items: center; gap: 4px; }
+.project-item .project-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-actions { display: none; gap: 2px; flex: none; }
+.project-item:hover .project-actions { display: flex; }
+.project-actions button { background: none; border: none; color: var(--text-dim); font-size: 12px; padding: 1px 4px; border-radius: 4px; line-height: 1.4; }
+.project-actions button:hover { background: #e3e1e0; color: var(--text); }
+.project-rename-form { flex: 1; min-width: 0; padding: 0; }
+.project-rename-form .inline-creator-ok { width: 26px; height: 26px; font-size: 12px; }
+#sidebar > .inline-creator .creator-btn-sidebar { width: 100%; margin-top: 4px; border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+#sidebar > .inline-creator .creator-btn-sidebar:hover { background: var(--hover); color: var(--text); }
+#sidebar > .inline-creator .inline-creator-form { padding: 4px 0 0; }
 #btn-menu { display: none; background: none; border: none; font-size: 20px; padding: 6px 10px; color: var(--text); }
 #btn-menu-close { display: none; background: none; border: none; font-size: 16px; color: var(--text-dim); float: right; padding: 4px 8px; }
 #sidebar-backdrop.hidden { display: none; }

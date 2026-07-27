@@ -1,19 +1,34 @@
 #!/usr/bin/env python3
-"""mini-asana: 本地单机版简易 Asana。
+"""mini-asana: 本地单机版简易 Asana（多项目版）。
 
 仅使用 Python 标准库。监听 127.0.0.1:8787。
 
-REST API:
-  GET    /api/tasks                 -> {"sections": [...], "tasks": [...]}
-  POST   /api/tasks                 创建任务 (JSON body)
-  PUT    /api/tasks/<id>            更新任务字段 (部分更新)
-  DELETE /api/tasks/<id>            删除任务
-  POST   /api/sections              新增 section {"name": str}
-  PUT    /api/sections/<name>       重命名 section {"name": new_name}
-  DELETE /api/sections/<name>       删除 section (其任务移到第一个剩余 section)
-  POST   /api/reorder               {"section": str, "ids": [task_id, ...]} 重排 section 内顺序
+REST API（项目）:
+  GET    /api/projects              -> {"projects": [{"id","name","task_count"}, ...]}
+  POST   /api/projects              新建项目 {"name": str}
+  GET    /api/projects/<pid>        项目详情
+  PATCH  /api/projects/<pid>        重命名项目 {"name": str}
+  DELETE /api/projects/<pid>        删除项目（最后一个项目不可删）
 
-所有写操作持久化到 data/tasks.json（原子写入）。
+REST API（项目作用域内的任务/分组；<pid> 为项目 id）:
+  GET    /api/projects/<pid>/tasks            -> {"project","sections","tasks"}
+  POST   /api/projects/<pid>/tasks            创建任务 (JSON body)
+  PUT    /api/projects/<pid>/tasks/<id>       更新任务字段 (部分更新)
+  DELETE /api/projects/<pid>/tasks/<id>       删除任务
+  POST   /api/projects/<pid>/sections         新增 section {"name": str}
+  PUT    /api/projects/<pid>/sections/<name>  重命名 section {"name": new_name}
+  DELETE /api/projects/<pid>/sections/<name>  删除 section (其任务移到第一个剩余 section)
+  POST   /api/projects/<pid>/reorder          {"section": str, "ids": [task_id, ...]} 重排 section 内顺序
+
+兼容旧版单项目路径（/api/tasks、/api/sections、/api/reorder 等），
+自动作用于 index 中的第一个项目（最老项目）。
+
+数据布局:
+  data/projects.json        项目索引 {"projects": [{"id","name"}, ...]}，数组顺序即项目顺序
+  data/projects/<pid>.json  每个项目一个文件 {"project","sections","tasks"}（原子写入）
+  启动时若只有旧版 data/tasks.json，会自动迁移为第一个项目，
+  旧文件改名 data/tasks.json.migrated；全新安装则自动创建默认项目。
+
 静态文件: / -> static/index.html, /static/* -> static/*
 
 认证（为公网部署准备的简单 token 认证，默认开启）:
@@ -31,6 +46,7 @@ import json
 import mimetypes
 import os
 import posixpath
+import re
 import secrets
 import threading
 import uuid
@@ -38,8 +54,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-DATA_FILE = os.path.join(BASE, "data", "tasks.json")
-TOKEN_FILE = os.path.join(BASE, "data", "auth_token.txt")
+DATA_DIR = os.path.join(BASE, "data")
+DATA_FILE = os.path.join(DATA_DIR, "tasks.json")  # 旧版单项目数据文件，仅用于启动时迁移
+TOKEN_FILE = os.path.join(DATA_DIR, "auth_token.txt")
+PROJECTS_DIR = os.path.join(DATA_DIR, "projects")
+INDEX_FILE = os.path.join(DATA_DIR, "projects.json")
 STATIC_DIR = os.path.join(BASE, "static")
 HOST = "127.0.0.1"
 PORT = 8787
@@ -53,6 +72,9 @@ TASK_FIELDS = {
     "name", "section", "assignee", "start_on", "due_on", "completed",
     "category", "effort", "priority", "dependencies", "notes", "link",
 }
+
+PID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+DEFAULT_SECTIONS = ["To do", "In progress"]
 
 LOGIN_HTML = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -135,16 +157,135 @@ def load_or_create_token():
     return token
 
 
-def load_db():
-    with open(DATA_FILE, encoding="utf-8") as f:
+# ---------- 项目数据布局 ----------
+
+def valid_pid(pid):
+    return bool(pid) and bool(PID_RE.fullmatch(pid))
+
+
+def project_file(pid):
+    return os.path.join(PROJECTS_DIR, pid + ".json")
+
+
+def load_index():
+    with open(INDEX_FILE, encoding="utf-8") as f:
         return json.load(f)
 
 
-def save_db(db):
-    tmp = DATA_FILE + ".tmp"
+def save_index(idx):
+    tmp = INDEX_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(idx, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, INDEX_FILE)
+
+
+def new_project_id(idx):
+    """生成不与现有项目/文件冲突的短随机 id（urlsafe 字符集，满足 valid_pid）。"""
+    ids = {p["id"] for p in idx["projects"]}
+    while True:
+        pid = secrets.token_urlsafe(6)  # 8 个字符
+        if valid_pid(pid) and pid not in ids and not os.path.exists(project_file(pid)):
+            return pid
+
+
+def default_project_id():
+    """index 中第一个项目（最老项目）的 id；无项目时返回 None。"""
+    try:
+        idx = load_index()
+    except (OSError, ValueError):
+        return None
+    projects = idx.get("projects") or []
+    return projects[0]["id"] if projects else None
+
+
+def load_db(pid):
+    with open(project_file(pid), encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_db(pid, db):
+    path = project_file(pid)
+    tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(db, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, DATA_FILE)
+    os.replace(tmp, path)
+
+
+def _write_new_project(pid, name):
+    save_db(pid, {"project": name, "sections": list(DEFAULT_SECTIONS), "tasks": []})
+
+
+def ensure_data_layout():
+    """启动时确保多项目数据布局就绪：
+    - 已有 data/projects/ 且 index 有效：直接使用
+    - 只有旧版 data/tasks.json：迁移为第一个项目，旧文件改名 tasks.json.migrated
+    - 全新安装：创建默认项目
+    - projects/ 存在但 index 缺失/为空：从项目文件重建 index；无任何项目则补默认项目
+    """
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+    if not os.path.isdir(PROJECTS_DIR):
+        if os.path.exists(DATA_FILE):
+            # 迁移旧版单项目数据
+            with open(DATA_FILE, encoding="utf-8") as f:
+                old = json.load(f)
+            name = (old.get("project") or old.get("name") or "Default Project")
+            name = str(name).strip() or "Default Project"
+            idx = {"projects": []}
+            pid = new_project_id(idx)
+            os.makedirs(PROJECTS_DIR)
+            save_db(pid, {
+                "project": name,
+                "sections": list(old.get("sections") or DEFAULT_SECTIONS),
+                "tasks": list(old.get("tasks") or []),
+            })
+            idx["projects"].append({"id": pid, "name": name})
+            save_index(idx)
+            os.rename(DATA_FILE, DATA_FILE + ".migrated")
+            print(f"[data] 已将旧版 data/tasks.json 迁移为项目「{name}」(id={pid})，"
+                  f"原文件已改名 data/tasks.json.migrated")
+            return
+        # 全新安装
+        idx = {"projects": []}
+        pid = new_project_id(idx)
+        os.makedirs(PROJECTS_DIR)
+        _write_new_project(pid, "Default Project")
+        idx["projects"].append({"id": pid, "name": "Default Project"})
+        save_index(idx)
+        print(f"[data] 全新安装，已创建默认项目「Default Project」(id={pid})")
+        return
+
+    # projects/ 已存在：校验 index
+    idx = None
+    if os.path.exists(INDEX_FILE):
+        try:
+            idx = load_index()
+        except (OSError, ValueError):
+            idx = None
+    if idx and idx.get("projects"):
+        return
+
+    # 从项目文件重建 index
+    projects = []
+    for fn in sorted(os.listdir(PROJECTS_DIR)):
+        pid = fn[:-5] if fn.endswith(".json") else None
+        if not pid or not valid_pid(pid):
+            continue
+        name = pid
+        try:
+            with open(os.path.join(PROJECTS_DIR, fn), encoding="utf-8") as f:
+                name = (json.load(f).get("project") or pid)
+                name = str(name).strip() or pid
+        except (OSError, ValueError):
+            pass
+        projects.append({"id": pid, "name": name})
+    if not projects:
+        pid = new_project_id({"projects": []})
+        _write_new_project(pid, "Default Project")
+        projects = [{"id": pid, "name": "Default Project"}]
+        print(f"[data] projects/ 为空，已创建默认项目「Default Project」(id={pid})")
+    save_index({"projects": projects})
+    print(f"[data] 已重建 projects.json（{len(projects)} 个项目）")
 
 
 def find_task(db, task_id):
@@ -212,66 +353,194 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     # ---------- routing ----------
+    def _route(self, method):
+        """统一 API 路由。项目本体 -> 项目作用域任务路由 -> 旧版兼容路径 -> 静态文件。"""
+        path = urlparse(self.path).path
+        body = None
+        if method in ("POST", "PUT", "PATCH"):
+            body = self._read_body()
+            if body is None:
+                return self._send_error_json(400, "invalid JSON")
+
+        # 项目集合
+        if path == "/api/projects":
+            if method == "GET":
+                return self._list_projects()
+            if method == "POST":
+                return self._create_project(body)
+            return self._send_error_json(405, "method not allowed")
+
+        # 项目本体
+        m = re.fullmatch(r"/api/projects/([A-Za-z0-9_-]{1,64})", path)
+        if m:
+            pid = m.group(1)
+            if method == "GET":
+                return self._get_project(pid)
+            if method == "PATCH":
+                return self._rename_project(pid, body)
+            if method == "DELETE":
+                return self._delete_project(pid)
+            return self._send_error_json(405, "method not allowed")
+
+        # 项目作用域内的任务/分组/排序
+        m = re.fullmatch(r"/api/projects/([A-Za-z0-9_-]{1,64})(/(?:tasks|sections|reorder)(?:/.*)?)", path)
+        if m:
+            pid, sub = m.group(1), m.group(2)
+            if not os.path.isfile(project_file(pid)):
+                return self._send_error_json(404, "project not found")
+            return self._tasks_route(method, pid, sub, body)
+
+        # 旧版单项目路径兼容：作用于 index 中第一个（最老）项目
+        if re.fullmatch(r"/api/(?:tasks|sections|reorder)(?:/.*)?", path):
+            pid = default_project_id()
+            if pid is None:
+                return self._send_error_json(404, "no project")
+            return self._tasks_route(method, pid, path[len("/api"):], body)
+
+        if path.startswith("/api/"):
+            return self._send_error_json(404, "not found")
+        if method == "GET":
+            return self._serve_static(path)
+        self._send_error_json(404, "not found")
+
+    def _tasks_route(self, method, pid, sub, body):
+        """项目作用域内的任务/分组/排序路由。
+        sub 形如 /tasks、/tasks/<id>、/sections、/sections/<name>、/reorder。"""
+        if sub == "/tasks":
+            if method == "GET":
+                with LOCK:
+                    self._send_json(load_db(pid))
+                return
+            if method == "POST":
+                return self._create_task(pid, body)
+        elif sub == "/sections" and method == "POST":
+            return self._create_section(pid, body)
+        elif sub == "/reorder" and method == "POST":
+            return self._reorder(pid, body)
+        elif sub.startswith("/tasks/") and method == "PUT":
+            return self._update_task(pid, unquote(sub[len("/tasks/"):]), body)
+        elif sub.startswith("/tasks/") and method == "DELETE":
+            return self._delete_task(pid, unquote(sub[len("/tasks/"):]))
+        elif sub.startswith("/sections/") and method == "PUT":
+            return self._rename_section(pid, unquote(sub[len("/sections/"):]), body)
+        elif sub.startswith("/sections/") and method == "DELETE":
+            return self._delete_section(pid, unquote(sub[len("/sections/"):]))
+        self._send_error_json(404, "not found")
+
     def do_GET(self):
         if not self._authorized():
             return self._reject()
-        path = urlparse(self.path).path
-        if path == "/api/tasks":
-            with LOCK:
-                self._send_json(load_db())
-        elif path.startswith("/api/"):
-            self._send_error_json(404, "not found")
-        else:
-            self._serve_static(path)
+        self._route("GET")
 
     def do_POST(self):
         if not self._authorized():
             return self._reject()
-        path = urlparse(self.path).path
-        body = self._read_body()
-        if body is None:
-            return self._send_error_json(400, "invalid JSON")
-        if path == "/api/tasks":
-            self._create_task(body)
-        elif path == "/api/sections":
-            self._create_section(body)
-        elif path == "/api/reorder":
-            self._reorder(body)
-        else:
-            self._send_error_json(404, "not found")
+        self._route("POST")
 
     def do_PUT(self):
         if not self._authorized():
             return self._reject()
-        path = urlparse(self.path).path
-        body = self._read_body()
-        if body is None:
-            return self._send_error_json(400, "invalid JSON")
-        if path.startswith("/api/tasks/"):
-            self._update_task(unquote(path[len("/api/tasks/"):]), body)
-        elif path.startswith("/api/sections/"):
-            self._rename_section(unquote(path[len("/api/sections/"):]), body)
-        else:
-            self._send_error_json(404, "not found")
+        self._route("PUT")
+
+    def do_PATCH(self):
+        if not self._authorized():
+            return self._reject()
+        self._route("PATCH")
 
     def do_DELETE(self):
         if not self._authorized():
             return self._reject()
-        path = urlparse(self.path).path
-        if path.startswith("/api/tasks/"):
-            self._delete_task(unquote(path[len("/api/tasks/"):]))
-        elif path.startswith("/api/sections/"):
-            self._delete_section(unquote(path[len("/api/sections/"):]))
-        else:
-            self._send_error_json(404, "not found")
+        self._route("DELETE")
+
+    # ---------- project ops ----------
+    @staticmethod
+    def _project_entry(idx, pid):
+        for p in idx["projects"]:
+            if p["id"] == pid:
+                return p
+        return None
+
+    def _task_count(self, pid):
+        try:
+            with open(project_file(pid), encoding="utf-8") as f:
+                return len(json.load(f).get("tasks") or [])
+        except (OSError, ValueError):
+            return 0
+
+    def _list_projects(self):
+        with LOCK:
+            idx = load_index()
+            out = [{"id": p["id"], "name": p["name"], "task_count": self._task_count(p["id"])}
+                   for p in idx["projects"]]
+        self._send_json({"projects": out})
+
+    def _get_project(self, pid):
+        with LOCK:
+            idx = load_index()
+            p = self._project_entry(idx, pid)
+            if not p or not os.path.isfile(project_file(pid)):
+                return self._send_error_json(404, "project not found")
+            out = {"id": p["id"], "name": p["name"], "task_count": self._task_count(pid)}
+        self._send_json(out)
+
+    def _create_project(self, body):
+        name = (body.get("name") or "").strip()
+        if not name:
+            return self._send_error_json(400, "name required")
+        if len(name) > 200:
+            return self._send_error_json(400, "name too long")
+        with LOCK:
+            idx = load_index()
+            pid = new_project_id(idx)
+            _write_new_project(pid, name)
+            idx["projects"].append({"id": pid, "name": name})
+            save_index(idx)
+        self._send_json({"id": pid, "name": name, "task_count": 0}, 201)
+
+    def _rename_project(self, pid, body):
+        name = (body.get("name") or "").strip()
+        if not name:
+            return self._send_error_json(400, "name required")
+        if len(name) > 200:
+            return self._send_error_json(400, "name too long")
+        with LOCK:
+            idx = load_index()
+            p = self._project_entry(idx, pid)
+            if not p:
+                return self._send_error_json(404, "project not found")
+            p["name"] = name
+            save_index(idx)
+            try:
+                db = load_db(pid)
+                db["project"] = name
+                save_db(pid, db)
+            except OSError:
+                pass
+        self._send_json({"id": pid, "name": name})
+
+    def _delete_project(self, pid):
+        with LOCK:
+            idx = load_index()
+            p = self._project_entry(idx, pid)
+            if not p:
+                return self._send_error_json(404, "project not found")
+            if len(idx["projects"]) <= 1:
+                return self._send_error_json(400, "cannot delete last project")
+            idx["projects"] = [x for x in idx["projects"] if x["id"] != pid]
+            save_index(idx)
+            try:
+                os.remove(project_file(pid))
+            except OSError:
+                pass
+        self._send_json({"ok": True})
 
     # ---------- task ops ----------
-    def _create_task(self, body):
+    def _create_task(self, pid, body):
         name = (body.get("name") or "").strip()
         if not name:
             return self._send_error_json(400, "name required")
         with LOCK:
-            db = load_db()
+            db = load_db(pid)
             section = body.get("section") or (db["sections"][0] if db["sections"] else "To do")
             if section not in db["sections"]:
                 db["sections"].append(section)
@@ -293,12 +562,12 @@ class Handler(BaseHTTPRequestHandler):
                 "order": order,
             }
             db["tasks"].append(task)
-            save_db(db)
+            save_db(pid, db)
         self._send_json(task, 201)
 
-    def _update_task(self, task_id, body):
+    def _update_task(self, pid, task_id, body):
         with LOCK:
-            db = load_db()
+            db = load_db(pid)
             task = find_task(db, task_id)
             if not task:
                 return self._send_error_json(404, "task not found")
@@ -312,12 +581,12 @@ class Handler(BaseHTTPRequestHandler):
                 if k == "section" and v not in db["sections"]:
                     db["sections"].append(v)
                 task[k] = v
-            save_db(db)
+            save_db(pid, db)
         self._send_json(task)
 
-    def _delete_task(self, task_id):
+    def _delete_task(self, pid, task_id):
         with LOCK:
-            db = load_db()
+            db = load_db(pid)
             task = find_task(db, task_id)
             if not task:
                 return self._send_error_json(404, "task not found")
@@ -325,28 +594,28 @@ class Handler(BaseHTTPRequestHandler):
             for t in db["tasks"]:  # 清理依赖引用
                 if task_id in t.get("dependencies", []):
                     t["dependencies"] = [d for d in t["dependencies"] if d != task_id]
-            save_db(db)
+            save_db(pid, db)
         self._send_json({"ok": True})
 
     # ---------- section ops ----------
-    def _create_section(self, body):
+    def _create_section(self, pid, body):
         name = (body.get("name") or "").strip()
         if not name:
             return self._send_error_json(400, "name required")
         with LOCK:
-            db = load_db()
+            db = load_db(pid)
             if name in db["sections"]:
                 return self._send_error_json(409, "section exists")
             db["sections"].append(name)
-            save_db(db)
+            save_db(pid, db)
         self._send_json({"sections": db["sections"]}, 201)
 
-    def _rename_section(self, old, body):
+    def _rename_section(self, pid, old, body):
         new = (body.get("name") or "").strip()
         if not new:
             return self._send_error_json(400, "name required")
         with LOCK:
-            db = load_db()
+            db = load_db(pid)
             if old not in db["sections"]:
                 return self._send_error_json(404, "section not found")
             if new != old and new in db["sections"]:
@@ -355,12 +624,12 @@ class Handler(BaseHTTPRequestHandler):
             for t in db["tasks"]:
                 if t["section"] == old:
                     t["section"] = new
-            save_db(db)
+            save_db(pid, db)
         self._send_json({"sections": db["sections"]})
 
-    def _delete_section(self, name):
+    def _delete_section(self, pid, name):
         with LOCK:
-            db = load_db()
+            db = load_db(pid)
             if name not in db["sections"]:
                 return self._send_error_json(404, "section not found")
             if len(db["sections"]) <= 1:
@@ -370,14 +639,14 @@ class Handler(BaseHTTPRequestHandler):
             for t in db["tasks"]:
                 if t["section"] == name:
                     t["section"] = fallback
-            save_db(db)
+            save_db(pid, db)
         self._send_json({"sections": db["sections"], "moved_to": fallback})
 
-    def _reorder(self, body):
+    def _reorder(self, pid, body):
         section = body.get("section")
         ids = body.get("ids") or []
         with LOCK:
-            db = load_db()
+            db = load_db(pid)
             in_section = [t for t in db["tasks"] if t["section"] == section]
             by_id = {t["id"]: t for t in in_section}
             order = 0
@@ -389,7 +658,7 @@ class Handler(BaseHTTPRequestHandler):
             for t in sorted(by_id.values(), key=lambda x: x["order"]):
                 t["order"] = order
                 order += 1
-            save_db(db)
+            save_db(pid, db)
         self._send_json({"ok": True})
 
     # ---------- static ----------
@@ -433,8 +702,8 @@ def main():
                     help="监听端口（默认 8787，也可用环境变量 MINI_ASANA_PORT）")
     args = ap.parse_args()
 
-    if not os.path.exists(DATA_FILE):
-        raise SystemExit("data/tasks.json 不存在，请先运行 python3 convert.py")
+    # 多项目数据布局：必要时自动迁移旧版 data/tasks.json 或创建默认项目
+    ensure_data_layout()
 
     if args.no_auth or os.environ.get("MINI_ASANA_NO_AUTH") == "1":
         AUTH_ENABLED = False

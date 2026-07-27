@@ -10,6 +10,9 @@ const state = {
   calMonth: null, // 0-based
   detailId: null,
   tlSelected: new Set(), // 时间线多选横条（Shift/Cmd/Ctrl+click），用于批量平移
+  projectId: null,       // 当前项目 id
+  projects: [],          // 全部项目 [{id,name,task_count}]
+  legacy: false,         // 服务端无项目 API（旧版）时退回单项目模式
 };
 
 /* ================= 工具 ================= */
@@ -469,16 +472,191 @@ async function api(method, url, body) {
   }
   return res.json();
 }
+/* ---------- 项目 ---------- */
+const PROJECT_KEY = "mini_asana_project";
+/* 项目作用域 API：/api/projects/<pid><path>；旧版服务端（无项目 API）退回 /api<path> */
+function papi(method, path, body) {
+  const url = state.legacy
+    ? "/api" + path
+    : "/api/projects/" + encodeURIComponent(state.projectId) + path;
+  return api(method, url, body);
+}
+function activeProject() { return state.projects.find(p => p.id === state.projectId) || null; }
+
+async function loadProjects() {
+  let r;
+  try {
+    r = await api("GET", "/api/projects");
+  } catch (e) {
+    if (e.message === "unauthorized") throw e;
+    // 旧版服务端没有项目 API：退回单项目模式（任务走 /api/tasks 等旧路径）
+    state.legacy = true;
+    state.projects = [];
+    state.projectId = null;
+    return;
+  }
+  state.legacy = false;
+  state.projects = r.projects || [];
+  let active = null;
+  try { active = localStorage.getItem(PROJECT_KEY); } catch (_) {}
+  if (!active || !state.projects.some(p => p.id === active)) {
+    active = state.projects[0] ? state.projects[0].id : null;
+  }
+  state.projectId = active;
+  try { localStorage.setItem(PROJECT_KEY, active || ""); } catch (_) {}
+}
+
+async function switchProject(id) {
+  if (!id || id === state.projectId) return;
+  state.projectId = id;
+  try { localStorage.setItem(PROJECT_KEY, id); } catch (_) {}
+  clearTLSelect();
+  closeDetail();
+  try {
+    await loadAll();
+  } catch (e) {
+    showToast("加载项目失败: " + e.message, true);
+  }
+  render();
+}
+
+async function createProject(name) {
+  const p = await api("POST", "/api/projects", { name });
+  state.projects.push(p);
+  renderProjects();
+  await switchProject(p.id);
+}
+
+function removeProject(p) {
+  confirmDialog(`删除项目「${p.name}」？其中的任务会一并删除，不可恢复。`, async () => {
+    try {
+      await api("DELETE", "/api/projects/" + encodeURIComponent(p.id));
+      state.projects = state.projects.filter(x => x.id !== p.id);
+      if (state.projectId === p.id) {
+        state.projectId = state.projects[0] ? state.projects[0].id : null;
+        try { localStorage.setItem(PROJECT_KEY, state.projectId || ""); } catch (_) {}
+        clearTLSelect();
+        closeDetail();
+        await loadAll();
+      }
+      render();
+    } catch (e) {
+      showToast("删除项目失败: " + e.message, true);
+    }
+  });
+}
+
+/* 侧边栏项目列表：点击切换，hover 显示 ✎ 重命名 / 🗑 删除（仅剩一个项目时不显示 🗑） */
+function renderProjects() {
+  const box = $("#project-list");
+  if (!box) return;
+  if (box.querySelector(".project-rename-form")) return; // 重命名输入中不重建
+  box.innerHTML = "";
+  if (projectCreatorEl) projectCreatorEl.style.display = state.legacy ? "none" : "";
+  if (state.legacy) return;
+  for (const p of state.projects) {
+    const item = document.createElement("div");
+    item.className = "nav-item project-item" + (p.id === state.projectId ? " active" : "");
+    item.title = p.name;
+    const name = document.createElement("span");
+    name.className = "project-name";
+    name.textContent = p.name;
+    item.appendChild(name);
+    const acts = document.createElement("span");
+    acts.className = "project-actions";
+    const ren = document.createElement("button");
+    ren.type = "button";
+    ren.textContent = "✎";
+    ren.title = "重命名项目";
+    ren.addEventListener("click", e => { e.stopPropagation(); startProjectRename(p, name); });
+    acts.appendChild(ren);
+    if (state.projects.length > 1) {
+      const del = document.createElement("button");
+      del.type = "button";
+      del.textContent = "🗑";
+      del.title = "删除项目";
+      del.addEventListener("click", e => { e.stopPropagation(); removeProject(p); });
+      acts.appendChild(del);
+    }
+    item.appendChild(acts);
+    item.addEventListener("click", () => {
+      switchProject(p.id);
+      // 移动端：点击项目后收起抽屉
+      $("#sidebar").classList.remove("open");
+      $("#sidebar-backdrop").classList.add("hidden");
+    });
+    box.appendChild(item);
+  }
+}
+
+/* 项目重命名：把名称就地换成输入框 + ✓（同分组重命名模式） */
+function startProjectRename(p, nameEl) {
+  const form = document.createElement("span");
+  form.className = "inline-creator-form project-rename-form";
+  const inp = document.createElement("input");
+  inp.className = "inline-input";
+  inp.value = p.name;
+  inp.setAttribute("enterkeyhint", "done");
+  inp.setAttribute("autocomplete", "off");
+  inp.setAttribute("autocorrect", "off");
+  const ok = document.createElement("button");
+  ok.type = "button";
+  ok.className = "inline-creator-ok";
+  ok.textContent = "✓";
+  form.appendChild(inp);
+  form.appendChild(ok);
+  nameEl.replaceWith(form);
+  inp.focus();
+  inp.select();
+  let busy = false;
+  async function submit() {
+    const name = inp.value.trim();
+    if (busy) return;
+    if (!name || name === p.name) { renderProjects(); return; }
+    busy = true;
+    inp.disabled = true;
+    ok.disabled = true;
+    try {
+      await api("PATCH", "/api/projects/" + encodeURIComponent(p.id), { name });
+      p.name = name;
+      renderProjects();
+      renderStats(); // 顶栏标题随项目名更新
+    } catch (e) {
+      showToast("重命名失败: " + e.message, true);
+      busy = false;
+      inp.disabled = false;
+      ok.disabled = false;
+      inp.focus();
+    }
+  }
+  form.addEventListener("click", e => e.stopPropagation());
+  inp.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); submit(); }
+    else if (e.key === "Escape") renderProjects();
+  });
+  ok.addEventListener("click", submit);
+  inp.addEventListener("blur", () => {
+    setTimeout(() => { if (!busy && !inp.value.trim()) renderProjects(); }, 120);
+  });
+}
+
 async function loadAll() {
-  const db = await api("GET", "/api/tasks");
+  const db = await papi("GET", "/tasks");
   state.tasks = db.tasks;
   state.sections = db.sections;
 }
+/* 启动流程：先取项目列表（决定 projectId），再加载该项目任务 */
+async function boot() {
+  await loadProjects();
+  await loadAll();
+}
+let projectCreatorEl = null; // 「＋ 新建项目」内联创建器（init 时挂载）
+
 async function updateTask(id, patch, opts) {
   const t = taskById(id);
   if (t) Object.assign(t, patch);
   try {
-    const saved = await api("PUT", "/api/tasks/" + encodeURIComponent(id), patch);
+    const saved = await papi("PUT", "/tasks/" + encodeURIComponent(id), patch);
     if (t) Object.assign(t, saved);
   } catch (e) {
     showToast("保存失败: " + e.message, true);
@@ -487,14 +665,14 @@ async function updateTask(id, patch, opts) {
   if (!opts || !opts.silent) render(); // silent：批量提交时跳过，由调用方最后统一 render
 }
 async function createTask(payload) {
-  const t = await api("POST", "/api/tasks", payload);
+  const t = await papi("POST", "/tasks", payload);
   state.tasks.push(t);
   if (!state.sections.includes(t.section)) state.sections.push(t.section);
   render();
   return t;
 }
 async function deleteTask(id) {
-  await api("DELETE", "/api/tasks/" + encodeURIComponent(id));
+  await papi("DELETE", "/tasks/" + encodeURIComponent(id));
   state.tasks = state.tasks.filter(t => t.id !== id);
   if (state.detailId === id) closeDetail();
   render();
@@ -511,10 +689,10 @@ async function moveTask(taskId, targetSection, targetIndex) {
   render();
   try {
     if (srcSection !== targetSection) {
-      await api("PUT", "/api/tasks/" + encodeURIComponent(taskId), { section: targetSection });
-      await api("POST", "/api/reorder", { section: srcSection, ids: sectionTasks(srcSection).map(x => x.id) });
+      await papi("PUT", "/tasks/" + encodeURIComponent(taskId), { section: targetSection });
+      await papi("POST", "/reorder", { section: srcSection, ids: sectionTasks(srcSection).map(x => x.id) });
     }
-    await api("POST", "/api/reorder", { section: targetSection, ids: siblings.map(x => x.id) });
+    await papi("POST", "/reorder", { section: targetSection, ids: siblings.map(x => x.id) });
   } catch (e) {
     showToast("移动失败: " + e.message, true);
     await loadAll();
@@ -522,7 +700,7 @@ async function moveTask(taskId, targetSection, targetIndex) {
   }
 }
 async function addSection(name) {
-  await api("POST", "/api/sections", { name });
+  await papi("POST", "/sections", { name });
   state.sections.push(name);
   render();
 }
@@ -556,7 +734,7 @@ function startSectionRename(oldName, h3) {
     inp.disabled = true;
     ok.disabled = true;
     try {
-      await api("PUT", "/api/sections/" + encodeURIComponent(oldName), { name });
+      await papi("PUT", "/sections/" + encodeURIComponent(oldName), { name });
       state.sections = state.sections.map(s => (s === oldName ? name : s));
       state.tasks.forEach(t => { if (t.section === oldName) t.section = name; });
       render();
@@ -580,7 +758,7 @@ function startSectionRename(oldName, h3) {
 async function removeSection(name) {
   confirmDialog(`删除分组「${name}」？其中的任务会移到第一个分组。`, async () => {
     try {
-      const r = await api("DELETE", "/api/sections/" + encodeURIComponent(name));
+      const r = await papi("DELETE", "/sections/" + encodeURIComponent(name));
       state.sections = r.sections;
       state.tasks.forEach(t => { if (t.section === name) t.section = r.moved_to; });
       render();
@@ -593,6 +771,7 @@ async function removeSection(name) {
 /* ================= 渲染入口 ================= */
 function render() {
   renderStats();
+  renderProjects();
   renderDatalists();
   $$(".tab").forEach(b => b.classList.toggle("active", b.dataset.view === state.view));
   const c = $("#view-container");
@@ -616,6 +795,8 @@ function render() {
 }
 
 function renderStats() {
+  const ap = activeProject();
+  if (ap) $("#project-title").textContent = ap.name; // 顶栏标题 = 当前项目名
   const open = state.tasks.filter(t => !t.completed).length;
   const done = state.tasks.length - open;
   if (window.matchMedia("(max-width: 768px)").matches) {
@@ -1946,6 +2127,14 @@ function init() {
     placeholder: "新分组名称",
     onSubmit: name => addSection(name),
   }));
+  // 侧边栏「＋ 新建项目」内联创建器
+  projectCreatorEl = makeInlineCreator({
+    buttonLabel: "＋ 新建项目",
+    buttonClass: "creator-btn-sidebar",
+    placeholder: "新项目名称",
+    onSubmit: name => createProject(name),
+  });
+  $("#btn-new-project").replaceWith(projectCreatorEl);
   $("#detail-close").addEventListener("click", closeDetail);
   document.addEventListener("keydown", e => {
     if (e.key !== "Escape") return;
@@ -1977,7 +2166,7 @@ function init() {
     if (!t) return;
     setToken(t);
     try {
-      await loadAll();
+      await boot();
       hideLogin();
       render();
     } catch (err) {
@@ -1987,14 +2176,14 @@ function init() {
 
   if (!getToken()) {
     // 无 token：先尝试无认证访问（--no-auth 模式可直接进入），401 时显示登录遮罩
-    loadAll().then(render).catch(e => {
+    boot().then(render).catch(e => {
       if (e.message !== "unauthorized") {
         $("#view-container").innerHTML = `<div class="tl-empty-hint">加载失败: ${esc(e.message)}</div>`;
       }
     });
     return;
   }
-  loadAll().then(render).catch(e => {
+  boot().then(render).catch(e => {
     if (e.message !== "unauthorized") {
       $("#view-container").innerHTML = `<div class="tl-empty-hint">加载失败: ${esc(e.message)}</div>`;
     }
