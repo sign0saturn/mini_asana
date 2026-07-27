@@ -147,7 +147,7 @@ cloudflared tunnel route dns <隧道名> <你的域名>
 
 ### 每日备份与隧道看门狗
 
-- `backup.sh`：复制任务数据到 `data/backups/`，保留最新 8 份；配合 backup plist 每日 03:17 执行。脚本按旧版单文件布局备份 `data/tasks.json`；多项目布局下请把源路径改为整个 `data/projects/` 目录与 `data/projects.json`。
+- `backup.sh`：把任务数据打包到 `data/backups/`，保留最新 8 份；配合 backup plist 每日 03:17 执行。多项目布局下备份 `data/projects.json` 与 `data/projects/`（tar.gz），也兼容旧版单文件 `data/tasks.json`。
 - `watchdog.sh`：每 2 分钟检测域名是否被 Cloudflare 边缘正常服务（先 DoH 取真实边缘 IP 再直连，规避 fake-ip DNS），连续 2 次失败自动 kickstart 隧道服务。两个关键参数可用环境变量覆盖：
   - `WATCHDOG_DOMAIN`：监控的域名（默认 `your-domain.example.com`，必须改）
   - `WATCHDOG_TUNNEL_LABEL`：隧道服务 label（默认 `local.miniasana-tunnel`）
