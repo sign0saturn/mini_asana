@@ -2,6 +2,28 @@
 
 A self-hosted, single-machine mini Asana — a personal project / home-improvement task tracker that runs on your own computer. Pure Python standard-library backend + vanilla JS frontend. No third-party dependencies, no build step: clone and run.
 
+## Screenshots
+
+**List** — inline editing of every field, category colors, drag to reorder
+
+![List view](docs/screenshots/list.png)
+
+**Board** — drag cards across columns and within a column
+
+![Board view](docs/screenshots/board.png)
+
+**Timeline** — Gantt bars with dependency arrows, drag to reschedule
+
+![Timeline view](docs/screenshots/timeline.png)
+
+**Calendar** — month view with multi-day tasks as continuous bars
+
+![Calendar view](docs/screenshots/calendar.png)
+
+**Mobile** — responsive layout, touch long-press dragging
+
+![Mobile list view](docs/screenshots/mobile.png)
+
 ## Features
 
 - **Multi-project**: create / switch / rename / delete projects in the left sidebar; data is stored in per-project files (`data/projects/`)
