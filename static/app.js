@@ -1925,6 +1925,23 @@ function renderTimeline(container) {
       const barRightX = xOf(b.due) + TL.dayW;
       label.classList.add(barRightX + 8 + textW <= trackW ? "out-r" : "out-l");
       bar.appendChild(label);
+      // parent bars: collapse/expand caret on the bar itself (same state as the label-column triangle);
+      // narrow bars get the caret just outside the left edge; its events never reach drag/resize/multi-select
+      if (!isSub && hasChildren(t.id)) {
+        const barW = xOf(b.due) + TL.dayW - xOf(b.start);
+        const caret = document.createElement("span");
+        caret.className = "tl-bar-caret" + (barW < (isMobile ? 56 : 44) ? " outside" : "");
+        const collapsed = isCollapsed(t.id);
+        caret.textContent = collapsed ? "▸" : "▾";
+        caret.title = collapsed ? tr("sub.expand") : tr("sub.collapse");
+        caret.addEventListener("pointerdown", e => e.stopPropagation());
+        caret.addEventListener("click", e => {
+          e.stopPropagation();
+          setCollapsed(t.id, !collapsed);
+          render();
+        });
+        bar.appendChild(caret);
+      }
       attachBarDrag(bar, t, b, xOf);
       track.appendChild(bar);
       row.appendChild(track);

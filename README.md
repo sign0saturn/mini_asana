@@ -35,7 +35,7 @@ A self-hosted, single-machine mini Asana — a personal project / home-improveme
 - **Category coloring**: calendar blocks and timeline bars are auto-colored by Category, consistent across all views
 - **Mobile support**: responsive layout, touch long-press dragging, bottom-sheet detail panel
 - **Task detail panel**: section, parent task, assignee, start/due dates, Category/Effort/Priority, multi-select dependencies, notes, link
-- **Subtasks (one level)**: nest a task under another by dragging it onto a row's body in List, or via the detail panel's Parent-task dropdown; drag out to un-nest. Collapse/expand with disclosure triangles in List and Timeline (remembered per project); parents show a done/total progress badge; board cards carry a "↳ parent" label
+- **Subtasks (one level)**: nest a task under another by dragging it onto a row's body in List, or via the detail panel's Parent-task dropdown; drag out to un-nest. Collapse/expand with disclosure triangles in List and Timeline (remembered per project) — Timeline parent bars also carry an on-bar caret (placed outside-left on narrow bars); subtasks indent deeper in List for a clear visual hierarchy; parents show a done/total progress badge; board cards carry a "↳ parent" label
 - **Token access auth** (on by default, can be disabled) for public-exposure scenarios
 - **Bilingual UI (中文 / English)**: language switcher at the bottom of the sidebar; remembers your choice (localStorage) and defaults to your browser language; dates and the login page are localized too
 
