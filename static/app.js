@@ -54,6 +54,17 @@ function catPill(cat) {
   if (!cat) return '<span class="pill-empty muted">—</span>';
   return `<span class="pill" style="background:${catColor(cat)}">${esc(cat)}</span>`;
 }
+/* Bar color resolution for timeline/calendar bars: a subtask with NO Category of its own inherits
+   its parent's category color (pure display inheritance — never written back to task data; one level
+   only, no deep walk). Returns null when neither task nor parent has a category -> default bar styling. */
+function barColorOf(t) {
+  if (t.category) return catColor(t.category);
+  if (t.parent_id) {
+    const p = taskById(t.parent_id);
+    if (p && p.category) return catColor(p.category);
+  }
+  return null;
+}
 function priHtml(p) {
   if (!p) return '<span class="pill-empty muted">—</span>';
   return `<span class="pri-${esc(p)}">${esc(p)}</span>`;
@@ -1898,17 +1909,18 @@ function renderTimeline(container) {
       bar.dataset.taskId = t.id; // for multi-select highlight / batch drag positioning
       if (state.tlSelected.has(t.id)) bar.classList.add("tl-bar-selected"); // keep the selected state across re-renders
       if (b.inferred) bar.style.opacity = "0.75";
-      // bars are colored by Category (same catColor mapping as the calendar):
+      // bars are colored by Category (same catColor mapping as the calendar; a subtask without its own
+      // Category inherits its parent's color — display only):
       // open = solid theme color; completed = light tint of the theme color (keeps the greyed-out done feel, no conflict with inferred opacity);
-      // no Category keeps the default blue/green style
-      if (t.category) {
-        const cc = catColor(t.category);
+      // no Category (and no parent Category) keeps the default blue/green style
+      const bc = barColorOf(t);
+      if (bc) {
         if (t.completed) {
-          bar.style.background = tintHex(cc, 0.65);
-          bar.style.borderColor = tintHex(cc, 0.4);
+          bar.style.background = tintHex(bc, 0.65);
+          bar.style.borderColor = tintHex(bc, 0.4);
         } else {
-          bar.style.background = cc;
-          bar.style.borderColor = cc;
+          bar.style.background = bc;
+          bar.style.borderColor = bc;
         }
       }
       // tooltip shows real data only: show the range only when start exists, otherwise just the due date
@@ -2373,10 +2385,12 @@ function renderCalendar(container) {
         item.textContent = t.name;
         item.title = t.name + (t.assignee ? " · " + t.assignee : "");
       }
-      // the whole block is colored by Category (consistent with board .pill: solid theme color + white text); multi-day segments are colored the same
-      if (t.category) {
+      // the whole block is colored by Category (consistent with board .pill: solid theme color + white text); multi-day segments are colored the same;
+      // a subtask without its own Category inherits its parent's color (display only, via barColorOf)
+      const calBc = barColorOf(t);
+      if (calBc) {
         item.classList.add("cal-cat");
-        item.style.background = catColor(t.category);
+        item.style.background = calBc;
       }
       item.draggable = true;
       item.addEventListener("click", () => { if (!clickSuppressed()) openDetail(t.id); });
