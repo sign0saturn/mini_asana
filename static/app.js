@@ -1914,7 +1914,7 @@ function renderTimeline(container) {
       // tooltip shows real data only: show the range only when start exists, otherwise just the due date
       const sF = fmtDate(b.start), dF = fmtDate(b.due);
       bar.title = t.name + "\n" + (t.start_on ? (sF === dF ? sF : `${sF} → ${dF}`) : tr("tl.dueOnly", { date: dF }));
-      positionBar(bar, b, xOf);
+      positionBar(bar, b, xOf, isSub);
       bar.innerHTML = '<span class="tl-resize l"></span><span class="tl-resize r"></span>';
       // task name labels always sit outside the bar on the right (full dark text, not truncated);
       // fall back to outside-left (right-aligned) when there is not enough room near the chart's right edge
@@ -1942,11 +1942,14 @@ function renderTimeline(container) {
         });
         bar.appendChild(caret);
       }
-      attachBarDrag(bar, t, b, xOf);
+      attachBarDrag(bar, t, b, xOf, isSub);
       track.appendChild(bar);
       row.appendChild(track);
       inner.appendChild(row);
-      barPos.set(t.id, { x1: xOf(b.start), x2: xOf(b.due) + TL.dayW, y: y + TL.rowH / 2 });
+      // arrows attach to the VISUAL bar edges (subtask bars are shifted by SUB_BAR_INDENT; x2 keeps the +2 border slack)
+      const vInd = isSub ? SUB_BAR_INDENT : 0;
+      const vW = Math.max((diffDays(b.start, b.due) + 1) * TL.dayW - 2 - vInd, TL.dayW - 2);
+      barPos.set(t.id, { x1: xOf(b.start) + vInd, x2: xOf(b.start) + vInd + vW + 2, y: y + TL.rowH / 2 });
       y += TL.rowH;
       rowEls.push(row);
     }
@@ -1995,9 +1998,16 @@ function tlLabelWidth(text) {
   return _tlLabelCtx.measureText(text).width;
 }
 
-function positionBar(bar, b, xOf) {
-  bar.style.left = xOf(b.start) + "px";
-  bar.style.width = (diffDays(b.start, b.due) + 1) * TL.dayW - 2 + "px";
+/* Subtask bars start SUB_BAR_INDENT px right of their true date position — a visual hierarchy gap
+   mirroring the list/label-column indent (~half a day: noticeable, but not date-confusing).
+   Purely visual: drag/resize commit math is delta-based (origStart/origDue + day delta), so dates stay truthful. */
+const SUB_BAR_INDENT = 14;
+function positionBar(bar, b, xOf, isSub) {
+  const indent = isSub ? SUB_BAR_INDENT : 0;
+  const fullW = (diffDays(b.start, b.due) + 1) * TL.dayW - 2;
+  bar.style.left = (xOf(b.start) + indent) + "px";
+  // never narrower than a normal single-day bar: a tiny bar overflows right instead of shrinking
+  bar.style.width = Math.max(fullW - indent, TL.dayW - 2) + "px";
 }
 
 /* timeline multi-select: Shift/Cmd/Ctrl+click toggles selection; blank click / Esc clears (wired up in init and renderTimeline) */
@@ -2012,7 +2022,7 @@ function clearTLSelect() {
   $$(".tl-bar.tl-bar-selected").forEach(b => b.classList.remove("tl-bar-selected"));
 }
 
-function attachBarDrag(bar, task, b, xOf) {
+function attachBarDrag(bar, task, b, xOf, isSub) {
   let mode = null, startX = 0, origStart = null, origDue = null, batch = [];
 
   // enter drag state: called immediately on mouse pointerdown; on touch after a 300ms long-press (anchored at the finger position on activation, preventing bar jumps)
@@ -2036,7 +2046,7 @@ function attachBarDrag(bar, task, b, xOf) {
         const bs = parseDate(bt.start_on) || parseDate(bt.due_on); // single-day bar without start: treat start as due
         const bd = parseDate(bt.due_on) || parseDate(bt.start_on);
         if (!bs || !bd) continue;
-        batch.push({ id, bar: bEl, s: bs, d: bd, hadStart: !!bt.start_on });
+        batch.push({ id, bar: bEl, s: bs, d: bd, hadStart: !!bt.start_on, isSub: !!bt.parent_id });
         bEl.classList.add("dragging");
       }
     }
@@ -2048,10 +2058,10 @@ function attachBarDrag(bar, task, b, xOf) {
       if (mode === "move") { ns = addDays(origStart, delta); nd = addDays(origDue, delta); }
       else if (mode === "left") { ns = addDays(origStart, delta); if (ns > nd) ns = new Date(nd); }
       else { nd = addDays(origDue, delta); if (nd < ns) nd = new Date(ns); }
-      positionBar(bar, { start: ns, due: nd }, xOf);
+      positionBar(bar, { start: ns, due: nd }, xOf, isSub);
       bar.dataset.ns = fmtDate(ns);
       bar.dataset.nd = fmtDate(nd);
-      for (const it of batch) positionBar(it.bar, { start: addDays(it.s, delta), due: addDays(it.d, delta) }, xOf);
+      for (const it of batch) positionBar(it.bar, { start: addDays(it.s, delta), due: addDays(it.d, delta) }, xOf, it.isSub);
     }
     async function onUp() {
       bar.removeEventListener("pointermove", onMove);
@@ -2081,8 +2091,8 @@ function attachBarDrag(bar, task, b, xOf) {
         for (const [id, patch] of jobs) await updateTask(id, patch, { silent: true });
         render();
       } else {
-        positionBar(bar, b, xOf);
-        for (const it of batch) positionBar(it.bar, { start: it.s, due: it.d }, xOf);
+        positionBar(bar, b, xOf, isSub);
+        for (const it of batch) positionBar(it.bar, { start: it.s, due: it.d }, xOf, it.isSub);
       }
       batch = [];
     }
