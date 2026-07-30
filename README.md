@@ -32,6 +32,7 @@ A self-hosted, single-machine mini Asana — a personal project / home-improveme
 - **List column sorting**: sticky column-header row; click a header to cycle asc → desc → off (back to manual order; ↑/↓ marks the active column). Chinese-aware text comparison, undated always last; display-only (never writes order), remembered per project, subtasks stay under their parent sorted among siblings, drag-reorder is disabled while a sort is active
 - **Board**: drag cards across columns and within a column; "＋ Add section" dashed column at the right end creates a new column inline
 - **Board filters**: filter bar with multi-select dropdown chips for assignee / Category / Priority / Effort (values present in the project, plus a None option) — OR within a dimension, AND across dimensions; per-column visible/total counts, clear-all chip, remembered per project
+- **Smart groups**: saved cross-section filter views, stored server-side in the project DB and listed under the project in the sidebar. The rule editor combines assignee / Category / Priority / Effort multi-selects (values present in the project + None), due-date presets (overdue / today / this week / no date) and a status choice (incomplete only / completed only / all) — OR within a dimension, AND across, with a live human-readable summary. The group view aggregates matching tasks from all sections under their original section headers (empty sections hidden; a matched subtask whose parent didn't match shows a "↳ parent" hint), column-header sorting works inside it, drag-reorder is disabled; the selected group is remembered per project
 - **Timeline**: drag bars to change start/due dates, drag edges to resize, dependency arrows (orthogonal routing with large rounded bends), multi-day and single-day bars, Shift/Cmd/Ctrl multi-select batch shifting (desktop), automatic task-name label placement
 - **Calendar**: month view; multi-day tasks render as continuous bars; drag to reschedule (multi-day tasks shift as a whole)
 - **Category coloring**: calendar blocks and timeline bars are auto-colored by Category, consistent across all views
@@ -92,7 +93,12 @@ POST   /api/projects/<pid>/sections           add section {"name": str}
 PUT    /api/projects/<pid>/sections/<name>    rename section {"name": new_name}
 DELETE /api/projects/<pid>/sections/<name>    delete section (its tasks move to the first remaining section)
 POST   /api/projects/<pid>/reorder            {"section": str, "ids": [task_id, ...]} reorder within a section
+POST   /api/projects/<pid>/groups             create smart group {"name": str, "rules": obj} -> 201 {"id","name","rules"}
+PUT    /api/projects/<pid>/groups/<gid>       update smart group (partial: name?/rules?)
+DELETE /api/projects/<pid>/groups/<gid>       delete smart group (404 on unknown gid)
 ```
+
+Smart-group `rules` is a free-form object; the UI writes `{assignee?, category?, priority?, effort?}` (value lists, `""` = none), `due?` (preset list: overdue/today/week/none) and `completed?` ("incomplete"/"completed"/"all"). The tasks GET response includes the project's `smart_groups` array; project files written before smart groups existed load with an empty list automatically.
 
 Tasks accept an optional `parent_id` (on both `POST` create and `PUT` update; `null`/empty un-parents) for one-level subtasks. The server returns `400` when the parent does not exist in the project, is itself a subtask (one level only), is the task itself, or when the task already has subtasks. Subtasks follow their parent's section changes; deleting a parent turns its subtasks into top-level tasks.
 

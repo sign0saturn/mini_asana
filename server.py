@@ -18,6 +18,9 @@ REST API (tasks/sections within a project scope; <pid> is the project id):
   POST   /api/projects/<pid>/sections         add section {"name": str}
   PUT    /api/projects/<pid>/sections/<name>  rename section {"name": new_name}
   DELETE /api/projects/<pid>/sections/<name>  delete section (its tasks move to the first remaining section)
+  POST   /api/projects/<pid>/groups           create smart group {"name": str, "rules": obj}
+  PUT    /api/projects/<pid>/groups/<gid>     update smart group (partial: name?/rules?)
+  DELETE /api/projects/<pid>/groups/<gid>     delete smart group
   POST   /api/projects/<pid>/reorder          {"section": str, "ids": [task_id, ...]} reorder within a section
 
 Legacy single-project paths (/api/tasks, /api/sections, /api/reorder, etc.)
@@ -230,7 +233,9 @@ def default_project_id():
 
 def load_db(pid):
     with open(project_file(pid), encoding="utf-8") as f:
-        return json.load(f)
+        db = json.load(f)
+    db.setdefault("smart_groups", [])  # tolerate project files from before smart groups
+    return db
 
 
 def save_db(pid, db):
@@ -242,7 +247,7 @@ def save_db(pid, db):
 
 
 def _write_new_project(pid, name):
-    save_db(pid, {"project": name, "sections": list(DEFAULT_SECTIONS), "tasks": []})
+    save_db(pid, {"project": name, "sections": list(DEFAULT_SECTIONS), "tasks": [], "smart_groups": []})
 
 
 def ensure_data_layout():
@@ -420,8 +425,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._delete_project(pid)
             return self._send_error_json(405, "method not allowed")
 
-        # project-scoped tasks/sections/reorder
-        m = re.fullmatch(r"/api/projects/([A-Za-z0-9_-]{1,64})(/(?:tasks|sections|reorder)(?:/.*)?)", path)
+        # project-scoped tasks/sections/reorder/groups
+        m = re.fullmatch(r"/api/projects/([A-Za-z0-9_-]{1,64})(/(?:tasks|sections|reorder|groups)(?:/.*)?)", path)
         if m:
             pid, sub = m.group(1), m.group(2)
             if not os.path.isfile(project_file(pid)):
@@ -453,6 +458,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._create_task(pid, body)
         elif sub == "/sections" and method == "POST":
             return self._create_section(pid, body)
+        elif sub == "/groups" and method == "POST":
+            return self._create_group(pid, body)
+        elif sub.startswith("/groups/") and method == "PUT":
+            return self._update_group(pid, unquote(sub[len("/groups/"):]), body)
+        elif sub.startswith("/groups/") and method == "DELETE":
+            return self._delete_group(pid, unquote(sub[len("/groups/"):]))
         elif sub == "/reorder" and method == "POST":
             return self._reorder(pid, body)
         elif sub.startswith("/tasks/") and method == "PUT":
@@ -676,6 +687,57 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"ok": True})
 
     # ---------- section ops ----------
+    # ---------- smart group ops (saved cross-section filter views; tasks are never modified) ----------
+    @staticmethod
+    def _validate_group_rules(rules):
+        return isinstance(rules, dict)
+
+    def _create_group(self, pid, body):
+        name = (body.get("name") or "").strip()
+        if not name:
+            return self._send_error_json(400, "name required")
+        if len(name) > 200:
+            return self._send_error_json(400, "name too long")
+        rules = body.get("rules") or {}
+        if not self._validate_group_rules(rules):
+            return self._send_error_json(400, "rules must be an object")
+        with LOCK:
+            db = load_db(pid)
+            group = {"id": secrets.token_urlsafe(6), "name": name, "rules": rules}
+            db["smart_groups"].append(group)
+            save_db(pid, db)
+        self._send_json(group, 201)
+
+    def _update_group(self, pid, gid, body):
+        with LOCK:
+            db = load_db(pid)
+            group = next((g for g in db["smart_groups"] if g["id"] == gid), None)
+            if not group:
+                return self._send_error_json(404, "group not found")
+            if "name" in body:
+                name = (body.get("name") or "").strip()
+                if not name:
+                    return self._send_error_json(400, "name required")
+                if len(name) > 200:
+                    return self._send_error_json(400, "name too long")
+                group["name"] = name
+            if "rules" in body:
+                if not self._validate_group_rules(body["rules"]):
+                    return self._send_error_json(400, "rules must be an object")
+                group["rules"] = body["rules"]
+            save_db(pid, db)
+        self._send_json(group)
+
+    def _delete_group(self, pid, gid):
+        with LOCK:
+            db = load_db(pid)
+            before = len(db["smart_groups"])
+            db["smart_groups"] = [g for g in db["smart_groups"] if g["id"] != gid]
+            if len(db["smart_groups"]) == before:
+                return self._send_error_json(404, "group not found")
+            save_db(pid, db)
+        self._send_json({"ok": True})
+
     def _create_section(self, pid, body):
         name = (body.get("name") or "").strip()
         if not name:

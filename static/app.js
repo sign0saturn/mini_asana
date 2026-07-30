@@ -5,12 +5,14 @@
 const state = {
   tasks: [],
   sections: [],
+  groups: [],            // smart groups of the current project [{id,name,rules}]
   view: "list",
   calYear: null,
   calMonth: null, // 0-based
   detailId: null,
   tlSelected: new Set(), // timeline multi-selected bars (Shift/Cmd/Ctrl+click), for batch shifting
   projectId: null,       // current project id
+  groupId: null,         // selected smart group id (view === "group")
   projects: [],          // all projects [{id,name,task_count}]
   legacy: false,         // fall back to single-project mode when the server has no projects API (legacy)
 };
@@ -169,6 +171,94 @@ function taskPassesFilters(t) {
   return true;
 }
 
+/* ================= smart groups (saved cross-section filter views) ================= */
+/* rules shape: { assignee?: [v,...], category?: [...], priority?: [...], effort?: [...],
+   due?: ["overdue"|"today"|"week"|"none", ...], completed?: "incomplete"|"completed"|"all" }.
+   "" inside a value list = the None option. OR within a dimension, AND across; absent dimension = no constraint. */
+const GROUP_KEY = "mini_asana_group"; // { [projectId]: groupId } — selected group, restored on reload
+function activeGroup() { return state.groups.find(g => g.id === state.groupId) || null; }
+function saveGroupSel() {
+  try {
+    const all = JSON.parse(localStorage.getItem(GROUP_KEY) || "{}");
+    if (state.groupId && state.projectId) all[state.projectId] = state.groupId;
+    else if (state.projectId) delete all[state.projectId];
+    localStorage.setItem(GROUP_KEY, JSON.stringify(all));
+  } catch (_) {}
+}
+function restoreGroupSelection() {
+  try {
+    const all = JSON.parse(localStorage.getItem(GROUP_KEY) || "{}");
+    const gid = all[state.projectId];
+    if (gid && state.groups.some(g => g.id === gid)) { state.groupId = gid; state.view = "group"; }
+  } catch (_) {}
+}
+/* select a sidebar group (-> group view) or null (back to the normal list view) */
+function selectGroup(gid) {
+  state.groupId = gid;
+  state.view = gid ? "group" : "list";
+  saveGroupSel();
+  render();
+}
+/* due presets: overdue = due before today; today = due today; week = due from today through this Sunday; none = no due date */
+function duePresetMatch(t, preset) {
+  const d = parseDate(t.due_on);
+  const td = today();
+  if (preset === "none") return !d;
+  if (!d) return false;
+  if (preset === "overdue") return d < td;
+  if (preset === "today") return diffDays(td, d) === 0;
+  if (preset === "week") { if (d < td) return false; return d <= addDays(td, (7 - td.getDay()) % 7); }
+  return false;
+}
+function matchSmartGroup(t, rules) {
+  for (const dim of FILTER_DIMS) {
+    const sel = rules[dim];
+    if (sel && sel.length && !sel.includes(t[dim] || "")) return false;
+  }
+  if (rules.due && rules.due.length && !rules.due.some(p => duePresetMatch(t, p))) return false;
+  const comp = rules.completed || "incomplete";
+  if (comp === "incomplete" && t.completed) return false;
+  if (comp === "completed" && !t.completed) return false;
+  return true;
+}
+/* human-readable rule summary (modal live preview + group view chips): ["分类: A、B", "截止: 本周内", "仅未完成"] */
+function rulesSummaryParts(rules) {
+  const sep = lang === "zh" ? "、" : ", ";
+  const parts = [];
+  const dimKeys = { assignee: "filter.dim.assignee", category: "filter.dim.category", priority: "filter.dim.priority", effort: "filter.dim.effort" };
+  for (const dim of FILTER_DIMS) {
+    const sel = rules[dim];
+    if (sel && sel.length) parts.push(tr(dimKeys[dim]) + ": " + sel.map(v => (v === "" ? tr("select.none") : v)).join(sep));
+  }
+  if (rules.due && rules.due.length) parts.push(tr("group.due") + ": " + rules.due.map(p => tr("group.due." + p)).join(sep));
+  parts.push(tr("group.completed." + (rules.completed || "incomplete")));
+  return parts;
+}
+
+async function createGroup(name, rules) {
+  const g = await papi("POST", "/groups", { name, rules });
+  state.groups.push(g);
+  return g;
+}
+async function updateGroupApi(gid, patch) {
+  const g = await papi("PUT", "/groups/" + encodeURIComponent(gid), patch);
+  const i = state.groups.findIndex(x => x.id === gid);
+  if (i >= 0) state.groups[i] = g;
+  return g;
+}
+function confirmDeleteGroup(g) {
+  confirmDialog(tr("confirm.deleteGroup", { name: g.name }), async () => {
+    try {
+      await papi("DELETE", "/groups/" + encodeURIComponent(g.id));
+      state.groups = state.groups.filter(x => x.id !== g.id);
+      if (state.groupId === g.id) { state.groupId = null; state.view = "list"; saveGroupSel(); }
+      render();
+    } catch (e) {
+      showToast(tr("toast.deleteFailed", { msg: e.message }), true);
+    }
+  });
+}
+
 /* ================= i18n ================= */
 /* UI chrome strings in zh/en. Task DATA (task names, section names, Category/Effort/Priority
    values such as 高/中/低) is user content and is never translated — only chrome goes through tr(). */
@@ -271,6 +361,27 @@ const I18N = {
     "filter.clear": "清除筛选（{n}）",
     "filter.emptyCol": "没有匹配的任务",
     "filter.noValues": "（暂无可选值）",
+    "group.new": "＋ 新建分组",
+    "group.newTitle": "新建智能分组",
+    "group.editTitle": "编辑智能分组",
+    "group.namePh": "分组名称",
+    "group.rules": "筛选规则（维度内「或」，跨维度「且」）",
+    "group.due": "截止日期",
+    "group.due.overdue": "已逾期",
+    "group.due.today": "今天",
+    "group.due.week": "本周内",
+    "group.due.none": "无日期",
+    "group.completed": "完成状态",
+    "group.completed.incomplete": "仅未完成",
+    "group.completed.completed": "仅已完成",
+    "group.completed.all": "全部",
+    "group.summaryAll": "全部任务（无筛选条件）",
+    "group.edit": "编辑",
+    "group.delete": "删除",
+    "group.save": "保存",
+    "group.empty": "没有匹配的任务。可点击上方「编辑」调整规则。",
+    "group.dragDisabled": "智能分组视图是筛选投影，不可拖拽排序",
+    "confirm.deleteGroup": "删除智能分组「{name}」？任务本身不会被删除。",
   },
   en: {
     "nav.myTasks": "🏠 My tasks",
@@ -370,6 +481,27 @@ const I18N = {
     "filter.clear": "Clear filters ({n})",
     "filter.emptyCol": "No matching tasks",
     "filter.noValues": "(no values yet)",
+    "group.new": "＋ New group",
+    "group.newTitle": "New smart group",
+    "group.editTitle": "Edit smart group",
+    "group.namePh": "Group name",
+    "group.rules": "Filter rules (OR within a dimension, AND across)",
+    "group.due": "Due date",
+    "group.due.overdue": "Overdue",
+    "group.due.today": "Today",
+    "group.due.week": "This week",
+    "group.due.none": "No date",
+    "group.completed": "Status",
+    "group.completed.incomplete": "Incomplete only",
+    "group.completed.completed": "Completed only",
+    "group.completed.all": "All",
+    "group.summaryAll": "All tasks (no rules)",
+    "group.edit": "Edit",
+    "group.delete": "Delete",
+    "group.save": "Save",
+    "group.empty": "No matching tasks. Use Edit above to adjust the rules.",
+    "group.dragDisabled": "A smart group is a filtered projection — drag reorder is unavailable",
+    "confirm.deleteGroup": "Delete smart group \"{name}\"? The tasks themselves are not deleted.",
   },
 };
 
@@ -886,7 +1018,9 @@ async function loadProjects() {
 async function switchProject(id) {
   if (!id || id === state.projectId) return;
   state.projectId = id;
+  state.groupId = null; // smart groups are per project
   try { localStorage.setItem(PROJECT_KEY, id); } catch (_) {}
+  saveGroupSel();
   clearTLSelect();
   closeDetail();
   try {
@@ -963,7 +1097,53 @@ function renderProjects() {
       $("#sidebar-backdrop").classList.add("hidden");
     });
     box.appendChild(item);
+    // smart groups sit indented under the ACTIVE project (they are per project), plus the creator
+    if (p.id === state.projectId) {
+      for (const g of state.groups) box.appendChild(makeGroupItem(g));
+      const creator = document.createElement("button");
+      creator.type = "button";
+      creator.className = "group-new-btn";
+      creator.textContent = tr("group.new");
+      creator.addEventListener("click", e => { e.stopPropagation(); openGroupDialog(null); });
+      box.appendChild(creator);
+    }
   }
+}
+
+/* sidebar smart-group item: ⏷ icon + name; hover reveals ✎ edit / 🗑 delete; click opens the group view */
+function makeGroupItem(g) {
+  const item = document.createElement("div");
+  item.className = "nav-item group-item" + (state.view === "group" && state.groupId === g.id ? " active" : "");
+  item.title = g.name;
+  const icon = document.createElement("span");
+  icon.className = "group-icon";
+  icon.textContent = "⏷";
+  item.appendChild(icon);
+  const name = document.createElement("span");
+  name.className = "project-name";
+  name.textContent = g.name;
+  item.appendChild(name);
+  const acts = document.createElement("span");
+  acts.className = "project-actions";
+  const ren = document.createElement("button");
+  ren.type = "button";
+  ren.textContent = "✎";
+  ren.title = tr("group.edit");
+  ren.addEventListener("click", e => { e.stopPropagation(); openGroupDialog(g); });
+  acts.appendChild(ren);
+  const del = document.createElement("button");
+  del.type = "button";
+  del.textContent = "🗑";
+  del.title = tr("group.delete");
+  del.addEventListener("click", e => { e.stopPropagation(); confirmDeleteGroup(g); });
+  acts.appendChild(del);
+  item.appendChild(acts);
+  item.addEventListener("click", () => {
+    selectGroup(g.id);
+    $("#sidebar").classList.remove("open");
+    $("#sidebar-backdrop").classList.add("hidden");
+  });
+  return item;
 }
 
 /* project rename: swap the name in place for an input + ✓ (same pattern as section rename) */
@@ -1021,11 +1201,13 @@ async function loadAll() {
   const db = await papi("GET", "/tasks");
   state.tasks = db.tasks;
   state.sections = db.sections;
+  state.groups = db.smart_groups || [];
 }
 /* startup flow: fetch the project list first (determines projectId), then load that project's tasks */
 async function boot() {
   await loadProjects();
   await loadAll();
+  restoreGroupSelection();
 }
 let projectCreatorEl = null; // inline creator for the "＋ 新建项目" button (mounted in init)
 
@@ -1201,6 +1383,7 @@ function render() {
   else if (state.view === "board") renderBoard(c);
   else if (state.view === "timeline") renderTimeline(c);
   else if (state.view === "calendar") renderCalendar(c);
+  else if (state.view === "group") renderGroupView(c);
   for (const [sel, l, t] of savedScroll) {
     const el = sel === "#view-container" ? c : $(sel);
     if (el) { el.scrollLeft = l; el.scrollTop = t; }
@@ -1394,7 +1577,7 @@ function listDropTarget(x, y, selfRow, dragTask) {
 function makeListRow(task, sec, opts) {
   opts = opts || {};
   const isSub = !!opts.isSub;
-  const sortOn = !!getListSort(); // while a column sort is active, drag-reorder conflicts with manual order -> disabled
+  const sortOn = !!getListSort() || !!opts.noDrag; // active column sort OR smart-group projection: drag-reorder disabled
   const row = document.createElement("div");
   row.className = "list-row" + (task.completed ? " task-done" : "") + (isSub ? " sub-row" : "");
   row.dataset.taskId = task.id;
@@ -1403,7 +1586,7 @@ function makeListRow(task, sec, opts) {
   handle.className = "drag-handle" + (sortOn ? " drag-disabled" : "");
   handle.textContent = "⠿";
   handle.draggable = !sortOn;
-  handle.title = sortOn ? tr("sort.dragDisabled") : tr("task.dragHandle");
+  handle.title = sortOn ? (opts.noDrag && !getListSort() ? tr("group.dragDisabled") : tr("sort.dragDisabled")) : tr("task.dragHandle");
   handle.addEventListener("dragstart", e => {
     if (sortOn) { e.preventDefault(); return; }
     e.dataTransfer.setData("text/task-id", task.id);
@@ -1507,6 +1690,14 @@ function makeListRow(task, sec, opts) {
       nameCell.appendChild(badge);
     }
   }
+  // smart group view: a matched subtask whose parent did NOT match still appears — with a ↳ parent hint
+  if (opts.parentHint) {
+    const h = document.createElement("span");
+    h.className = "group-parent-hint muted";
+    h.textContent = "↳ " + opts.parentHint;
+    h.title = opts.parentHint;
+    nameCell.appendChild(h);
+  }
   row.appendChild(nameCell);
 
   // assignee
@@ -1607,6 +1798,227 @@ function makeCell(task, field, opts) {
   }
   showView();
   return cell;
+}
+
+/* ================= smart group modal + group view ================= */
+/* stateless multi-select chip for the group rule editor — same look as the board filter chips
+   (.filter-chip/.filter-pop CSS), but bound to a local rules object instead of localStorage */
+function makeMsChip(label, options, selected, onToggle) {
+  const wrap = document.createElement("div");
+  wrap.className = "filter-chip-wrap";
+  const chip = document.createElement("button");
+  chip.type = "button";
+  function refresh() {
+    chip.className = "filter-chip" + (selected.length ? " active" : "");
+    chip.textContent = label + (selected.length ? " · " + selected.length : "");
+  }
+  refresh();
+  chip.addEventListener("click", e => {
+    e.stopPropagation();
+    closeFilterPop();
+    const pop = document.createElement("div");
+    pop.className = "filter-pop";
+    _openFilterPop = pop;
+    pop.addEventListener("click", ev => ev.stopPropagation());
+    for (const opt of options) {
+      const row = document.createElement("label");
+      row.className = "filter-opt";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = selected.includes(opt.value);
+      cb.addEventListener("change", () => { onToggle(opt.value, cb.checked); refresh(); });
+      row.appendChild(cb);
+      const txt = document.createElement("span");
+      txt.textContent = opt.label;
+      row.appendChild(txt);
+      pop.appendChild(row);
+    }
+    wrap.appendChild(pop);
+  });
+  wrap.appendChild(chip);
+  return wrap;
+}
+
+/* create/edit smart group dialog: name + rule editor (4 property dimensions + due presets + status radios)
+   with a live human-readable summary; reuses the task-dialog overlay/sheet pattern (bottom-sheet on mobile) */
+function openGroupDialog(group) {
+  const isEdit = !!group;
+  const rules = JSON.parse(JSON.stringify((group && group.rules) || {}));
+  const ov = document.createElement("div");
+  ov.className = "task-dialog-overlay";
+  ov.innerHTML = `
+  <div class="task-dialog group-dialog" role="dialog" aria-label="${tr(isEdit ? "group.editTitle" : "group.newTitle")}">
+    <div class="td-header"><span>${tr(isEdit ? "group.editTitle" : "group.newTitle")}</span><button type="button" class="td-close" title="${tr("btn.close")}">✕</button></div>
+    <div class="td-body">
+      <label>${tr("field.name")} *</label>
+      <input class="td-name" type="text" placeholder="${tr("group.namePh")}" enterkeyhint="done" autocomplete="off" autocorrect="off">
+      <label>${tr("group.rules")}</label>
+      <div class="group-rule-chips"></div>
+      <label>${tr("group.due")}</label>
+      <div class="group-due-chips"></div>
+      <label>${tr("group.completed")}</label>
+      <div class="group-completed"></div>
+      <div class="group-summary muted"></div>
+    </div>
+    <div class="td-footer">
+      <button type="button" class="td-cancel">${tr("btn.cancel")}</button>
+      <button type="button" class="td-create">${tr(isEdit ? "group.save" : "btn.create")}</button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  const nameInp = ov.querySelector(".td-name");
+  nameInp.value = group ? group.name : "";
+  const saveBtn = ov.querySelector(".td-create");
+  const close = () => { closeFilterPop(); ov.remove(); };
+  ov.querySelector(".td-close").addEventListener("click", close);
+  ov.querySelector(".td-cancel").addEventListener("click", close);
+  ov.addEventListener("click", e => { if (e.target === ov) close(); });
+  ov.addEventListener("keydown", e => { if (e.key === "Escape") close(); });
+
+  const summaryEl = ov.querySelector(".group-summary");
+  function refreshSummary() {
+    const parts = rulesSummaryParts(rules);
+    const hasRules = FILTER_DIMS.some(d => (rules[d] || []).length) || (rules.due || []).length;
+    summaryEl.textContent = hasRules ? parts.join(" × ") : tr("group.summaryAll");
+  }
+  function dimToggle(dim) {
+    return (v, on) => {
+      const cur = new Set(rules[dim] || []);
+      if (on) cur.add(v); else cur.delete(v);
+      if (cur.size) rules[dim] = [...cur]; else delete rules[dim];
+      refreshSummary();
+    };
+  }
+  // 4 property dimensions: values present in the project + None ("") first, same as the board filter bar
+  const chipsBox = ov.querySelector(".group-rule-chips");
+  for (const dim of FILTER_DIMS) {
+    const vals = [...new Set(state.tasks.map(t => t[dim] || ""))].sort((a, b) => (a === "" ? -1 : b === "" ? 1 : cmpText(a, b)));
+    const opts = vals.map(v => ({ value: v, label: v === "" ? tr("select.none") : v }));
+    rules[dim] = rules[dim] || [];
+    if (!rules[dim].length) delete rules[dim];
+    chipsBox.appendChild(makeMsChip(tr("filter.dim." + dim), opts, rules[dim] || [], dimToggle(dim)));
+  }
+  // due presets
+  const dueBox = ov.querySelector(".group-due-chips");
+  const dueOpts = ["overdue", "today", "week", "none"].map(p => ({ value: p, label: tr("group.due." + p) }));
+  dueBox.appendChild(makeMsChip(tr("group.due"), dueOpts, rules.due || [], dimToggle("due")));
+  // completed status radios
+  const compBox = ov.querySelector(".group-completed");
+  for (const v of ["incomplete", "completed", "all"]) {
+    const lab = document.createElement("label");
+    lab.className = "group-radio";
+    const r = document.createElement("input");
+    r.type = "radio";
+    r.name = "group-completed";
+    r.value = v;
+    r.checked = (rules.completed || "incomplete") === v;
+    r.addEventListener("change", () => { rules.completed = v; refreshSummary(); });
+    lab.appendChild(r);
+    const txt = document.createElement("span");
+    txt.textContent = tr("group.completed." + v);
+    lab.appendChild(txt);
+    compBox.appendChild(lab);
+  }
+  refreshSummary();
+
+  function refreshSave() { saveBtn.disabled = !nameInp.value.trim(); }
+  nameInp.addEventListener("input", refreshSave);
+  refreshSave();
+  nameInp.focus();
+  saveBtn.addEventListener("click", async () => {
+    const name = nameInp.value.trim();
+    if (!name) return;
+    saveBtn.disabled = true;
+    try {
+      if (isEdit) {
+        await updateGroupApi(group.id, { name, rules });
+        render();
+      } else {
+        const g = await createGroup(name, rules);
+        state.groupId = g.id; // jump straight into the new group's view
+        state.view = "group";
+        saveGroupSel();
+        render();
+      }
+      close();
+    } catch (e) {
+      showToast(tr("toast.saveFailed", { msg: e.message }), true);
+      saveBtn.disabled = false;
+    }
+  });
+}
+
+/* smart group view: matching tasks from ALL sections, under their original section headers
+   (sections with zero matches hidden). Hierarchy: a matched parent shows its matched children;
+   a matched child whose parent did not match is shown with a ↳ parent hint. Drag-reorder disabled
+   (filtered projection); inline edits / detail panel work normally; column-header sorting applies. */
+function renderGroupView(container) {
+  const g = activeGroup();
+  if (!g) { selectGroup(null); return; } // group was deleted elsewhere -> back to the normal list
+  const bar = document.createElement("div");
+  bar.className = "group-view-bar";
+  const title = document.createElement("span");
+  title.className = "group-view-name";
+  title.textContent = "⏷ " + g.name;
+  bar.appendChild(title);
+  const chips = document.createElement("span");
+  chips.className = "group-view-chips";
+  for (const p of rulesSummaryParts(g.rules || {})) {
+    const c = document.createElement("span");
+    c.className = "group-rule-chip";
+    c.textContent = p;
+    chips.appendChild(c);
+  }
+  bar.appendChild(chips);
+  const edit = document.createElement("button");
+  edit.type = "button";
+  edit.className = "group-bar-btn";
+  edit.textContent = tr("group.edit");
+  edit.addEventListener("click", () => openGroupDialog(g));
+  bar.appendChild(edit);
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "group-bar-btn danger";
+  del.textContent = tr("group.delete");
+  del.addEventListener("click", () => confirmDeleteGroup(g));
+  bar.appendChild(del);
+  container.appendChild(bar);
+
+  renderListHeader(container); // column-header sorting works inside the group view
+
+  const rules = g.rules || {};
+  let shown = 0;
+  for (const sec of state.sections) {
+    const rows = [];
+    for (const t of sortedForList(topTasks(sec))) {
+      const mk = sortedForList(childrenOf(t.id).filter(k => matchSmartGroup(k, rules)));
+      if (matchSmartGroup(t, rules)) {
+        rows.push({ t: t, opts: {} });
+        if (!isCollapsed(t.id)) for (const k of mk) rows.push({ t: k, opts: { isSub: true } });
+      } else {
+        for (const k of mk) rows.push({ t: k, opts: { isSub: true, parentHint: t.name } });
+      }
+    }
+    if (!rows.length) continue;
+    shown += rows.length;
+    const secEl = document.createElement("div");
+    secEl.className = "list-section";
+    const header = document.createElement("div");
+    header.className = "list-section-header";
+    header.innerHTML = `<h3>${esc(sec)}</h3><span class="count">${rows.length}</span>`;
+    secEl.appendChild(header);
+    for (const r of rows) {
+      r.opts.noDrag = true; // a smart group is a filtered projection — manual reorder makes no sense here
+      secEl.appendChild(makeListRow(r.t, sec, r.opts));
+    }
+    container.appendChild(secEl);
+  }
+  if (!shown) {
+    const hint = document.createElement("div");
+    hint.className = "tl-empty-hint";
+    hint.textContent = tr("group.empty");
+    container.appendChild(hint);
+  }
 }
 
 /* ================= board view ================= */
@@ -2903,6 +3315,8 @@ function init() {
 
   $$(".tab").forEach(b => b.addEventListener("click", () => {
     state.view = b.dataset.view;
+    state.groupId = null; // leaving the smart group view back to the normal views
+    saveGroupSel();
     render();
   }));
   // language switcher (sidebar bottom): switch + initial translation of static strings

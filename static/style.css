@@ -675,3 +675,43 @@ button.sub-toggle:hover { background: var(--hover); color: var(--text); }
   .filter-chip { padding: 6px 12px; font-size: 12px; } /* roomier touch target */
   .board-add-col { width: 60vw; min-width: 60vw; scroll-snap-align: start; }
 }
+
+/* ---------- smart groups (saved cross-section filter views) ---------- */
+.group-item { padding-left: 26px; display: flex; align-items: center; gap: 4px; }
+.group-item .group-icon { flex: none; font-size: 10px; color: var(--text-dim); }
+.group-item:hover .project-actions { display: flex; }
+.group-new-btn {
+  background: none; border: none; color: var(--text-dim); text-align: left;
+  padding: 5px 8px 5px 30px; font-size: 12px; cursor: pointer; border-radius: 6px;
+}
+.group-new-btn:hover { background: var(--hover); color: var(--text); }
+/* group view top bar: name + rule summary chips + edit/delete */
+.group-view-bar {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  padding: 2px 0 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border);
+}
+.group-view-name { font-size: 15px; font-weight: 700; }
+.group-view-chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; }
+.group-rule-chip {
+  font-size: 11px; color: var(--text-dim); background: var(--hover);
+  border-radius: 10px; padding: 2px 9px; white-space: nowrap;
+}
+.group-bar-btn {
+  background: none; border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 12px; font-size: 12px; color: var(--text-dim); cursor: pointer; flex: none;
+}
+.group-bar-btn:hover { border-color: var(--accent); color: var(--text); }
+.group-bar-btn.danger:hover { border-color: #c66; color: #c66; }
+/* rule editor inside the modal */
+.group-rule-chips, .group-due-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+.group-completed { display: flex; gap: 14px; margin: 2px 0 4px; }
+.group-radio { display: flex; align-items: center; gap: 5px; font-size: 13px; cursor: pointer; }
+.group-radio input { margin: 0; }
+.group-summary { margin-top: 8px; font-size: 12px; line-height: 1.5; }
+.group-parent-hint { font-size: 11px; margin-left: 6px; white-space: nowrap; }
+
+@media (max-width: 768px) {
+  .group-view-bar { gap: 6px; }
+  .group-bar-btn { padding: 6px 12px; }
+  .group-completed { gap: 10px; flex-wrap: wrap; }
+}
