@@ -98,6 +98,77 @@ function setCollapsed(pid, on) {
   try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...s])); } catch (_) {}
 }
 
+/* ================= list sorting (DISPLAY-ONLY; never writes order to the server) ================= */
+/* persisted per project in localStorage: { [projectId]: { key, dir: "asc"|"desc" } } */
+const LIST_SORT_KEY = "mini_asana_list_sort";
+function listSortAll() { try { return JSON.parse(localStorage.getItem(LIST_SORT_KEY) || "{}"); } catch (_) { return {}; } }
+function getListSort() { const s = listSortAll()[state.projectId]; return s && s.key ? s : null; }
+function setListSort(key, dir) {
+  const all = listSortAll();
+  if (key) all[state.projectId] = { key, dir }; else delete all[state.projectId];
+  try { localStorage.setItem(LIST_SORT_KEY, JSON.stringify(all)); } catch (_) {}
+}
+/* comparator choices (documented): text fields use localeCompare with "zh" (Chinese-aware);
+   Priority asc = 高 > 中 > 低 (highest priority first); Effort asc = 小 > 中 > 大;
+   unknown/custom enum values sort after the known ranks, compared as text;
+   EMPTY values (undated / unassigned / no category…) always sort LAST in both directions. */
+const PRI_RANK = { "高": 0, "中": 1, "低": 2 };
+const EFF_RANK = { "小": 0, "中": 1, "大": 2 };
+function cmpText(a, b) { return String(a).localeCompare(String(b), "zh"); }
+function listComparator(key, dir) {
+  const mul = dir === "desc" ? -1 : 1;
+  return (a, b) => {
+    const va = a[key] || "", vb = b[key] || "";
+    if (!va && !vb) return 0;
+    if (!va) return 1;
+    if (!vb) return -1;
+    let c;
+    if (key === "priority" || key === "effort") {
+      const R = key === "priority" ? PRI_RANK : EFF_RANK;
+      const ra = va in R ? R[va] : 99, rb = vb in R ? R[vb] : 99;
+      c = ra !== rb ? ra - rb : cmpText(va, vb);
+    } else {
+      c = cmpText(va, vb); // ISO date strings (due_on) also compare correctly as text
+    }
+    return c * mul;
+  };
+}
+/* manual order when no sort is active (input lists are already order-sorted); sorted copy otherwise */
+function sortedForList(tasks) {
+  const s = getListSort();
+  if (!s) return tasks;
+  return [...tasks].sort(listComparator(s.key, s.dir));
+}
+
+/* ================= board filters (combinable; per project, localStorage) ================= */
+/* { [projectId]: { assignee: [v,...], category: [...], priority: [...], effort: [...] } };
+   "" inside a value list = the 空/None option. OR within a dimension, AND across dimensions. */
+const BOARD_FILTER_KEY = "mini_asana_board_filters";
+const FILTER_DIMS = ["assignee", "category", "priority", "effort"];
+function boardFilterAll() { try { return JSON.parse(localStorage.getItem(BOARD_FILTER_KEY) || "{}"); } catch (_) { return {}; } }
+function getBoardFilters() { return boardFilterAll()[state.projectId] || {}; }
+function boardFilterTotal() { const f = getBoardFilters(); return FILTER_DIMS.reduce((n, d) => n + ((f[d] || []).length), 0); }
+function setBoardFilter(dim, values) {
+  const all = boardFilterAll();
+  const cur = { ...(all[state.projectId] || {}) };
+  if (values.length) cur[dim] = values; else delete cur[dim];
+  if (Object.keys(cur).length) all[state.projectId] = cur; else delete all[state.projectId];
+  try { localStorage.setItem(BOARD_FILTER_KEY, JSON.stringify(all)); } catch (_) {}
+}
+function clearBoardFilters() {
+  const all = boardFilterAll();
+  delete all[state.projectId];
+  try { localStorage.setItem(BOARD_FILTER_KEY, JSON.stringify(all)); } catch (_) {}
+}
+function taskPassesFilters(t) {
+  const f = getBoardFilters();
+  for (const dim of FILTER_DIMS) {
+    const sel = f[dim];
+    if (sel && sel.length && !sel.includes(t[dim] || "")) return false;
+  }
+  return true;
+}
+
 /* ================= i18n ================= */
 /* UI chrome strings in zh/en. Task DATA (task names, section names, Category/Effort/Priority
    values such as 高/中/低) is user content and is never translated — only chrome goes through tr(). */
@@ -188,6 +259,18 @@ const I18N = {
     "sub.progress": "子任务进度 {done}/{total}",
     "sub.unparent": "移出父任务",
     "toast.parentHasChildren": "该任务已有子任务，不能再设为子任务",
+    "field.category": "分类",
+    "field.priority": "优先级",
+    "sort.title": "点击按{col}排序（升序 → 降序 → 取消，恢复手动顺序）",
+    "sort.dragDisabled": "取消排序后可拖拽排序",
+    "board.addColumn": "＋ 添加分组",
+    "filter.dim.assignee": "负责人",
+    "filter.dim.category": "分类",
+    "filter.dim.priority": "优先级",
+    "filter.dim.effort": "工作量",
+    "filter.clear": "清除筛选（{n}）",
+    "filter.emptyCol": "没有匹配的任务",
+    "filter.noValues": "（暂无可选值）",
   },
   en: {
     "nav.myTasks": "🏠 My tasks",
@@ -275,6 +358,18 @@ const I18N = {
     "sub.progress": "Subtask progress {done}/{total}",
     "sub.unparent": "Remove from parent",
     "toast.parentHasChildren": "This task already has subtasks and can't become one",
+    "field.category": "Category",
+    "field.priority": "Priority",
+    "sort.title": "Click to sort by {col} (asc → desc → off, back to manual order)",
+    "sort.dragDisabled": "Clear the sort to drag-reorder again",
+    "board.addColumn": "＋ Add section",
+    "filter.dim.assignee": "Assignee",
+    "filter.dim.category": "Category",
+    "filter.dim.priority": "Priority",
+    "filter.dim.effort": "Effort",
+    "filter.clear": "Clear filters ({n})",
+    "filter.emptyCol": "No matching tasks",
+    "filter.noValues": "(no values yet)",
   },
 };
 
@@ -1170,7 +1265,47 @@ function makeCheckbox(task) {
 }
 
 /* ================= list view ================= */
+/* sticky column header row above the list (desktop only — mobile rows wrap into two-line cards, so the
+   header is hidden by CSS there; an active sort still applies to the rows). Clicking a sortable column
+   cycles asc → desc → off (back to manual order); ↑/↓ marks the active column. */
+function renderListHeader(container) {
+  const s = getListSort();
+  const head = document.createElement("div");
+  head.className = "list-header-row";
+  const lead = document.createElement("span"); // aligns with drag-handle + toggle + checkbox
+  lead.className = "lh-lead";
+  head.appendChild(lead);
+  const cols = [
+    ["name", "field.name", "lh-name"],
+    ["assignee", "field.assignee", ""],
+    ["due_on", "field.due", "lh-date"],
+    ["category", "field.category", ""],
+    ["effort", "field.effort", ""],
+    ["priority", "field.priority", ""],
+  ];
+  for (const [key, labelKey, extra] of cols) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "lh-cell" + (extra ? " " + extra : "") + (s && s.key === key ? " active" : "");
+    b.textContent = tr(labelKey) + (s && s.key === key ? (s.dir === "asc" ? " ↑" : " ↓") : "");
+    b.title = tr("sort.title", { col: tr(labelKey) });
+    b.addEventListener("click", () => {
+      const cur = getListSort();
+      if (!cur || cur.key !== key) setListSort(key, "asc");
+      else if (cur.dir === "asc") setListSort(key, "desc");
+      else setListSort(null);
+      render();
+    });
+    head.appendChild(b);
+  }
+  const tail = document.createElement("span"); // aligns with the delete button
+  tail.className = "lh-tail";
+  head.appendChild(tail);
+  container.appendChild(head);
+}
+
 function renderList(container) {
+  renderListHeader(container);
   for (const sec of state.sections) {
     const secEl = document.createElement("div");
     secEl.className = "list-section";
@@ -1186,19 +1321,21 @@ function renderList(container) {
       </span>`;
     header.querySelector('[data-act="rename"]').addEventListener("click", () => startSectionRename(sec, header.querySelector("h3")));
     header.querySelector('[data-act="delete"]').addEventListener("click", () => removeSection(sec));
-    // dropping onto a section header = move to the end of that section
+    // dropping onto a section header = move to the end of that section (disabled while a sort is active)
     header.addEventListener("dragover", e => { e.preventDefault(); });
     header.addEventListener("drop", e => {
       e.preventDefault();
+      if (getListSort()) return;
       const id = e.dataTransfer.getData("text/task-id");
       if (id) placeTask(id, { section: sec, parentId: null, index: topTasks(sec).filter(t => t.id !== id).length });
     });
     secEl.appendChild(header);
 
-    for (const task of topTasks(sec)) {
+    // sort top-level tasks within the section; subtasks stay under their parent, sorted among siblings
+    for (const task of sortedForList(topTasks(sec))) {
       secEl.appendChild(makeListRow(task, sec, {}));
       if (!isCollapsed(task.id)) {
-        for (const sub of childrenOf(task.id)) secEl.appendChild(makeListRow(sub, sec, { isSub: true }));
+        for (const sub of sortedForList(childrenOf(task.id))) secEl.appendChild(makeListRow(sub, sec, { isSub: true }));
       }
     }
 
@@ -1212,6 +1349,7 @@ function renderList(container) {
     secEl.addEventListener("dragover", e => e.preventDefault());
     secEl.addEventListener("drop", e => {
       e.preventDefault();
+      if (getListSort()) return; // manual reorder is disabled while a sort is active
       const id = e.dataTransfer.getData("text/task-id");
       if (id) placeTask(id, { section: sec, parentId: null, index: topTasks(sec).filter(t => t.id !== id).length });
     });
@@ -1256,16 +1394,18 @@ function listDropTarget(x, y, selfRow, dragTask) {
 function makeListRow(task, sec, opts) {
   opts = opts || {};
   const isSub = !!opts.isSub;
+  const sortOn = !!getListSort(); // while a column sort is active, drag-reorder conflicts with manual order -> disabled
   const row = document.createElement("div");
   row.className = "list-row" + (task.completed ? " task-done" : "") + (isSub ? " sub-row" : "");
   row.dataset.taskId = task.id;
 
   const handle = document.createElement("span");
-  handle.className = "drag-handle";
+  handle.className = "drag-handle" + (sortOn ? " drag-disabled" : "");
   handle.textContent = "⠿";
-  handle.draggable = true;
-  handle.title = tr("task.dragHandle");
+  handle.draggable = !sortOn;
+  handle.title = sortOn ? tr("sort.dragDisabled") : tr("task.dragHandle");
   handle.addEventListener("dragstart", e => {
+    if (sortOn) { e.preventDefault(); return; }
     e.dataTransfer.setData("text/task-id", task.id);
     e.dataTransfer.effectAllowed = "move";
     try { e.dataTransfer.setDragImage(row, 20, 12); } catch (_) {}
@@ -1278,7 +1418,7 @@ function makeListRow(task, sec, opts) {
     clearListDropMarks();
   });
   // touch: hold the handle 180ms to start dragging (handle has touch-action:none, no scroll conflict)
-  attachTouchDrag(handle, {
+  if (!sortOn) attachTouchDrag(handle, {
     pressDelay: 180,
     makeGhost: () => {
       const g = row.cloneNode(true);
@@ -1413,6 +1553,7 @@ function makeListRow(task, sec, opts) {
   row.addEventListener("drop", e => {
     e.preventDefault();
     e.stopPropagation();
+    if (sortOn) return; // manual reorder is disabled while a sort is active
     const id = e.dataTransfer.getData("text/task-id");
     row.classList.remove("drop-before", "drop-after", "drop-into");
     if (!id || id === task.id) return;
@@ -1469,17 +1610,102 @@ function makeCell(task, field, opts) {
 }
 
 /* ================= board view ================= */
+/* re-open a dimension's popover after a filter change triggers render() (so multi-pick stays smooth) */
+let _reopenFilterDim = null;
+
+/* filter bar above the board: one dropdown chip per dimension (values PRESENT in the current project,
+   plus 空/None), a Clear chip with the total active count when any filter is on */
+function renderBoardFilterBar() {
+  const bar = document.createElement("div");
+  bar.className = "board-filterbar";
+  const filters = getBoardFilters();
+  for (const dim of FILTER_DIMS) bar.appendChild(makeFilterChip(dim, filters[dim] || []));
+  const total = boardFilterTotal();
+  if (total > 0) {
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "filter-chip filter-clear";
+    clear.textContent = tr("filter.clear", { n: total });
+    clear.addEventListener("click", () => { clearBoardFilters(); render(); });
+    bar.appendChild(clear);
+  }
+  return bar;
+}
+
+let _openFilterPop = null;
+function closeFilterPop() {
+  if (_openFilterPop) { _openFilterPop.remove(); _openFilterPop = null; }
+}
+
+function makeFilterChip(dim, selected) {
+  const wrap = document.createElement("div");
+  wrap.className = "filter-chip-wrap";
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = "filter-chip" + (selected.length ? " active" : "");
+  chip.textContent = tr("filter.dim." + dim) + (selected.length ? " · " + selected.length : "");
+  chip.addEventListener("click", e => {
+    e.stopPropagation();
+    if (_openFilterPop && _openFilterPop.dataset.dim === dim) { closeFilterPop(); return; }
+    closeFilterPop();
+    wrap.appendChild(makeFilterPop(dim, selected));
+  });
+  wrap.appendChild(chip);
+  return wrap;
+}
+
+/* small multi-select menu under the chip: checkbox list; each toggle applies immediately (live filtering) */
+function makeFilterPop(dim, selected) {
+  const pop = document.createElement("div");
+  pop.className = "filter-pop";
+  pop.dataset.dim = dim;
+  _openFilterPop = pop;
+  pop.addEventListener("click", e => e.stopPropagation());
+  // values present in the project + the 空/None option ("") first
+  const vals = [...new Set(state.tasks.map(t => t[dim] || ""))].sort((a, b) => (a === "" ? -1 : b === "" ? 1 : cmpText(a, b)));
+  if (!vals.length) {
+    const hint = document.createElement("div");
+    hint.className = "filter-opt muted";
+    hint.textContent = tr("filter.noValues");
+    pop.appendChild(hint);
+  }
+  for (const v of vals) {
+    const row = document.createElement("label");
+    row.className = "filter-opt";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = selected.includes(v);
+    cb.addEventListener("change", () => {
+      const cur = new Set(getBoardFilters()[dim] || []);
+      if (cb.checked) cur.add(v); else cur.delete(v);
+      setBoardFilter(dim, [...cur]);
+      _reopenFilterDim = dim; // keep the menu open for more picks after the re-render
+      render();
+    });
+    row.appendChild(cb);
+    const txt = document.createElement("span");
+    txt.textContent = v === "" ? tr("select.none") : v;
+    row.appendChild(txt);
+    pop.appendChild(row);
+  }
+  return pop;
+}
+
 function renderBoard(container) {
+  closeFilterPop(); // any popover from before this re-render is detached; drop the stale reference
+  container.appendChild(renderBoardFilterBar());
   const board = document.createElement("div");
   board.id = "board";
+  const filtering = boardFilterTotal() > 0;
   for (const sec of state.sections) {
     const col = document.createElement("div");
     col.className = "board-col";
     col.dataset.section = sec;
     const tasks = sectionTasks(sec);
+    const visible = filtering ? tasks.filter(taskPassesFilters) : tasks;
     const head = document.createElement("div");
     head.className = "board-col-header";
-    head.innerHTML = `<h3>${esc(sec)}</h3><span class="count">${tasks.length}</span>
+    head.innerHTML = `<h3>${esc(sec)}</h3><span class="count">${filtering ? visible.length + " / " + tasks.length : tasks.length}</span>
       <span class="section-actions" style="display:flex">
         <button data-act="rename" title="${tr("column.rename")}">✎</button>
         <button data-act="delete" title="${tr("column.delete")}">🗑</button>
@@ -1490,7 +1716,14 @@ function renderBoard(container) {
 
     const cards = document.createElement("div");
     cards.className = "board-cards";
-    for (const task of tasks) cards.appendChild(makeBoardCard(task, sec));
+    for (const task of visible) cards.appendChild(makeBoardCard(task, sec));
+    // filtered column with hidden cards: muted empty state
+    if (filtering && tasks.length && !visible.length) {
+      const hint = document.createElement("div");
+      hint.className = "board-col-empty muted";
+      hint.textContent = tr("filter.emptyCol");
+      cards.appendChild(hint);
+    }
     cards.addEventListener("dragover", e => { e.preventDefault(); col.classList.add("drag-over"); });
     cards.addEventListener("dragleave", e => { if (e.target === cards) col.classList.remove("drag-over"); });
     cards.addEventListener("drop", e => {
@@ -1509,7 +1742,24 @@ function renderBoard(container) {
     col.appendChild(addTaskBtn);
     board.appendChild(col);
   }
+  // Asana-style add-column affordance at the right end: dashed muted placeholder -> inline input -> new section
+  const addCol = document.createElement("div");
+  addCol.className = "board-col board-add-col";
+  addCol.appendChild(makeInlineCreator({
+    buttonLabelKey: "board.addColumn",
+    placeholderKey: "section.namePh",
+    onSubmit: name => addSection(name),
+  }));
+  board.appendChild(addCol);
   container.appendChild(board);
+  // a checkbox toggle re-rendered the board; reopen that dimension's menu so multi-pick stays smooth
+  if (_reopenFilterDim) {
+    const dim = _reopenFilterDim;
+    _reopenFilterDim = null;
+    const wraps = $$(".filter-chip-wrap");
+    const idx = FILTER_DIMS.indexOf(dim);
+    if (wraps[idx]) wraps[idx].appendChild(makeFilterPop(dim, getBoardFilters()[dim] || []));
+  }
 }
 
 function makeBoardCard(task, sec) {
@@ -2657,6 +2907,8 @@ function init() {
   }));
   // language switcher (sidebar bottom): switch + initial translation of static strings
   $$("#lang-switch button").forEach(b => b.addEventListener("click", () => setLang(b.dataset.lang)));
+  // clicking anywhere outside an open board filter menu closes it (menu/chip stopPropagation internally)
+  document.addEventListener("click", closeFilterPop);
   applyI18n();
   updateLangSwitch();
   // the "＋ 分组" button becomes an inline creator (replaces prompt)

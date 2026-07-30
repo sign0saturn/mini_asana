@@ -29,7 +29,9 @@ A self-hosted, single-machine mini Asana — a personal project / home-improveme
 - **Multi-project**: create / switch / rename / delete projects in the left sidebar; data is stored in per-project files (`data/projects/`)
 - **Four views**: list / board / timeline (Gantt) / calendar, switchable in the sidebar
 - **List**: inline editing of every field (assignee, due date, Category, Effort, Priority), drag to reorder and move across sections, checkbox completion
-- **Board**: drag cards across columns and within a column
+- **List column sorting**: sticky column-header row; click a header to cycle asc → desc → off (back to manual order; ↑/↓ marks the active column). Chinese-aware text comparison, undated always last; display-only (never writes order), remembered per project, subtasks stay under their parent sorted among siblings, drag-reorder is disabled while a sort is active
+- **Board**: drag cards across columns and within a column; "＋ Add section" dashed column at the right end creates a new column inline
+- **Board filters**: filter bar with multi-select dropdown chips for assignee / Category / Priority / Effort (values present in the project, plus a None option) — OR within a dimension, AND across dimensions; per-column visible/total counts, clear-all chip, remembered per project
 - **Timeline**: drag bars to change start/due dates, drag edges to resize, dependency arrows (orthogonal routing with large rounded bends), multi-day and single-day bars, Shift/Cmd/Ctrl multi-select batch shifting (desktop), automatic task-name label placement
 - **Calendar**: month view; multi-day tasks render as continuous bars; drag to reschedule (multi-day tasks shift as a whole)
 - **Category coloring**: calendar blocks and timeline bars are auto-colored by Category, consistent across all views

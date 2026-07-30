@@ -608,3 +608,70 @@ button.sub-toggle:hover { background: var(--hover); color: var(--text); }
   .tl-bar-caret::before { inset: -6px; } /* 20+12 = 32px touch hit area */
   .tl-bar-caret.outside { left: -25px; }
 }
+
+/* ---------- list column header row (sticky; click to cycle asc → desc → off) ---------- */
+.list-header-row {
+  display: flex; align-items: center; gap: 10px; padding: 4px 4px 6px;
+  position: sticky; top: -12px; /* offset the #view-container's 12px top padding */
+  z-index: 5; background: #fff; border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+}
+.list-header-row .lh-lead { flex: none; width: 56px; } /* drag-handle + toggle/indent + checkbox */
+.list-header-row .lh-tail { flex: none; width: 18px; } /* delete button column */
+.lh-cell {
+  flex: 1; min-width: 90px; background: none; border: none; padding: 2px 0; text-align: left;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-dim); cursor: pointer; border-radius: 4px; white-space: nowrap;
+}
+.lh-cell:hover { color: var(--text); background: var(--hover); }
+.lh-cell.active { color: var(--accent); }
+.lh-cell.lh-name { flex: 2; min-width: 160px; }
+.lh-cell.lh-date { max-width: 130px; }
+/* drag handle disabled while a sort is active */
+.drag-handle.drag-disabled { opacity: 0.3; cursor: not-allowed; }
+
+/* ---------- board filter bar (OR within a dimension, AND across; per project) ---------- */
+.board-filterbar {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 2px;
+}
+.filter-chip-wrap { position: relative; flex: none; }
+.filter-chip {
+  background: #fff; border: 1px solid var(--border); border-radius: 14px;
+  padding: 4px 12px; font-size: 12px; color: var(--text-dim); cursor: pointer; white-space: nowrap;
+}
+.filter-chip:hover { border-color: var(--accent); color: var(--text); }
+.filter-chip.active { border-color: var(--accent); color: var(--accent); background: #eef3fc; font-weight: 600; }
+.filter-chip.filter-clear { border-style: dashed; color: #c66; }
+.filter-pop {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 60;
+  min-width: 170px; max-height: 260px; overflow-y: auto;
+  background: #fff; border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.12); padding: 4px;
+}
+.filter-opt {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  font-size: 13px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+}
+.filter-opt:hover { background: var(--hover); }
+.filter-opt input { flex: none; margin: 0; }
+.filter-opt.muted { cursor: default; font-size: 12px; }
+
+/* ---------- board add-column affordance ---------- */
+.board-add-col {
+  border: 1.5px dashed var(--border); background: transparent; box-shadow: none;
+  align-items: flex-start; justify-content: flex-start;
+}
+.board-add-col:hover { border-color: var(--accent); }
+.board-add-col .inline-creator { padding: 2px; }
+.board-add-col .add-task-btn { white-space: nowrap; }
+.board-col-empty { padding: 8px 4px; font-size: 12px; }
+
+@media (max-width: 768px) {
+  /* mobile list rows wrap into two-line cards — the column header can't align, so it is hidden;
+     an active sort still applies to the rows */
+  .list-header-row { display: none; }
+  .board-filterbar { gap: 6px; margin-bottom: 8px; }
+  .filter-chip { padding: 6px 12px; font-size: 12px; } /* roomier touch target */
+  .board-add-col { width: 60vw; min-width: 60vw; scroll-snap-align: start; }
+}
