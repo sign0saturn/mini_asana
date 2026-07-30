@@ -34,7 +34,8 @@ A self-hosted, single-machine mini Asana — a personal project / home-improveme
 - **Calendar**: month view; multi-day tasks render as continuous bars; drag to reschedule (multi-day tasks shift as a whole)
 - **Category coloring**: calendar blocks and timeline bars are auto-colored by Category, consistent across all views
 - **Mobile support**: responsive layout, touch long-press dragging, bottom-sheet detail panel
-- **Task detail panel**: section, assignee, start/due dates, Category/Effort/Priority, multi-select dependencies, notes, link
+- **Task detail panel**: section, parent task, assignee, start/due dates, Category/Effort/Priority, multi-select dependencies, notes, link
+- **Subtasks (one level)**: nest a task under another by dragging it onto a row's body in List, or via the detail panel's Parent-task dropdown; drag out to un-nest. Collapse/expand with disclosure triangles in List and Timeline (remembered per project); parents show a done/total progress badge; board cards carry a "↳ parent" label
 - **Token access auth** (on by default, can be disabled) for public-exposure scenarios
 - **Bilingual UI (中文 / English)**: language switcher at the bottom of the sidebar; remembers your choice (localStorage) and defaults to your browser language; dates and the login page are localized too
 
@@ -90,6 +91,8 @@ PUT    /api/projects/<pid>/sections/<name>    rename section {"name": new_name}
 DELETE /api/projects/<pid>/sections/<name>    delete section (its tasks move to the first remaining section)
 POST   /api/projects/<pid>/reorder            {"section": str, "ids": [task_id, ...]} reorder within a section
 ```
+
+Tasks accept an optional `parent_id` (on both `POST` create and `PUT` update; `null`/empty un-parents) for one-level subtasks. The server returns `400` when the parent does not exist in the project, is itself a subtask (one level only), is the task itself, or when the task already has subtasks. Subtasks follow their parent's section changes; deleting a parent turns its subtasks into top-level tasks.
 
 Legacy single-project paths (`/api/tasks`, `/api/sections`, `/api/reorder`, etc.) still work and apply to the first (oldest) project in the index.
 

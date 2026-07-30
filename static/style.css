@@ -118,7 +118,7 @@ input[type="date"].inline-input { font-family: inherit; }
 .list-row.drop-before { box-shadow: 0 -2px 0 var(--accent); }
 .list-row.drop-after { box-shadow: 0 2px 0 var(--accent); }
 .list-row .drag-handle { color: #cfcfcf; cursor: grab; flex: none; user-select: none; touch-action: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-.list-row .task-name { flex: 2; min-width: 160px; }
+.list-row .task-name { flex: 2; min-width: 160px; display: flex; align-items: center; }
 .list-row .cell { flex: 1; min-width: 90px; color: var(--text-dim); font-size: 13px; }
 .list-row .cell-date { max-width: 130px; }
 .list-row .del-btn { visibility: hidden; background: none; border: none; color: #c66; font-size: 13px; }
@@ -184,6 +184,7 @@ input[type="date"].inline-input { font-family: inherit; }
   width: var(--name-w, 220px); min-width: var(--name-w, 220px); position: sticky; left: 0; z-index: 4; background: #fff;
   border-right: 1px solid var(--border); padding: 7px 12px; font-size: 13px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
+  display: flex; align-items: center; gap: 2px;
 }
 .tl-row.tl-section-row .tl-name { font-weight: 700; font-size: 12px; background: #faf9f9; }
 .tl-name:hover { color: var(--accent); }
@@ -549,4 +550,41 @@ input[type="date"].inline-input { font-family: inherit; }
 /* compact form inside list cells */
 .list-row .cell .sel-custom select, .list-row .cell .sel-custom-input {
   width: auto; min-width: 96px; padding: 3px 6px; font-size: 13px; margin-top: 0;
+}
+
+/* ---------- subtasks (one level) ---------- */
+.list-row.sub-row { background: #faf9f9; }
+.list-row.sub-row:hover { background: var(--hover); }
+.list-row.drop-into { box-shadow: inset 0 0 0 2px var(--accent); background: #eef3fb; }
+.sub-toggle {
+  flex: none; width: 24px; height: 24px; border: none; background: none; padding: 0;
+  color: var(--text-dim); font-size: 11px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 4px;
+}
+button.sub-toggle:hover { background: var(--hover); color: var(--text); }
+.sub-toggle-spacer { cursor: default; }
+.list-row .sub-indent { flex: none; width: 24px; }
+.sub-progress {
+  flex: none; font-size: 11px; color: var(--text-dim); background: var(--hover);
+  border-radius: 8px; padding: 1px 6px; margin-left: 6px;
+}
+.tl-name .tl-name-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-name .sub-toggle { width: 18px; height: 18px; font-size: 9px; }
+.tl-name .sub-indent { flex: none; width: 16px; }
+.tl-name.sub { color: var(--text-dim); }
+.board-card .card-parent { font-size: 11px; color: var(--text-dim); margin: -4px 0 6px; }
+.detail-parent { display: flex; align-items: center; gap: 6px; }
+.detail-parent select { flex: 1; min-width: 0; }
+.parent-unlink { flex: none; border: none; background: none; color: var(--text-dim); font-size: 13px; padding: 4px 6px; border-radius: 4px; }
+.parent-unlink:hover { background: var(--hover); color: #c66; }
+.parent-hint { font-size: 11px; color: var(--text-dim); }
+.add-subtask-btn { background: none; border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 13px; color: var(--text); }
+.add-subtask-btn:hover { background: var(--hover); }
+.td-parent-hint { font-size: 12px; color: var(--text-dim); padding: 0 16px 8px; }
+
+@media (max-width: 768px) {
+  /* subtask touch targets: disclosure triangles get a >=32px hit area; slightly smaller indent */
+  .sub-toggle, .sub-toggle-spacer { width: 32px; height: 32px; }
+  .list-row .sub-indent { width: 14px; }
+  .tl-name .sub-toggle { width: 26px; height: 26px; font-size: 10px; }
 }

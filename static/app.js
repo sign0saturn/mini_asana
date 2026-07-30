@@ -64,6 +64,29 @@ function sectionTasks(sec) {
   return state.tasks.filter(t => t.section === sec).sort((a, b) => a.order - b.order);
 }
 
+/* ---- subtask helpers (one level only): a task with parent_id renders under its parent, never top-level ---- */
+function childrenOf(pid) { return state.tasks.filter(t => t.parent_id === pid).sort((a, b) => a.order - b.order); }
+function hasChildren(id) { return state.tasks.some(t => t.parent_id === id); }
+function topTasks(sec) { return state.tasks.filter(t => t.section === sec && !t.parent_id).sort((a, b) => a.order - b.order); }
+/* flat display sequence of a section: each top-level task followed by its subtasks */
+function flatSectionList(sec) {
+  const out = [];
+  for (const t of topTasks(sec)) { out.push(t); out.push(...childrenOf(t.id)); }
+  return out;
+}
+
+/* collapsed parent ids, persisted per project ("<projectId>:<taskId>") */
+const COLLAPSE_KEY = "mini_asana_collapsed";
+function collapsedSet() {
+  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "[]")); } catch (_) { return new Set(); }
+}
+function isCollapsed(pid) { return collapsedSet().has(state.projectId + ":" + pid); }
+function setCollapsed(pid, on) {
+  const s = collapsedSet(), k = state.projectId + ":" + pid;
+  if (on) s.add(k); else s.delete(k);
+  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...s])); } catch (_) {}
+}
+
 /* ================= i18n ================= */
 /* UI chrome strings in zh/en. Task DATA (task names, section names, Category/Effort/Priority
    values such as 高/中/低) is user content and is never translated — only chrome goes through tr(). */
@@ -145,6 +168,15 @@ const I18N = {
     "toast.deleteSectionFailed": "删除分组失败: {msg}",
     "toast.deleteProjectFailed": "删除项目失败: {msg}",
     "toast.loadProjectFailed": "加载项目失败: {msg}",
+    "field.parent": "父任务",
+    "field.parentLocked": "已有子任务的任务不能再设为子任务",
+    "task.addSubtask": "＋ 添加子任务",
+    "task.subtaskOf": "「{name}」的子任务",
+    "sub.collapse": "收起子任务",
+    "sub.expand": "展开子任务",
+    "sub.progress": "子任务进度 {done}/{total}",
+    "sub.unparent": "移出父任务",
+    "toast.parentHasChildren": "该任务已有子任务，不能再设为子任务",
   },
   en: {
     "nav.myTasks": "🏠 My tasks",
@@ -223,6 +255,15 @@ const I18N = {
     "toast.deleteSectionFailed": "Failed to delete section: {msg}",
     "toast.deleteProjectFailed": "Failed to delete project: {msg}",
     "toast.loadProjectFailed": "Failed to load project: {msg}",
+    "field.parent": "Parent task",
+    "field.parentLocked": "Tasks with subtasks can't become a subtask",
+    "task.addSubtask": "＋ Add subtask",
+    "task.subtaskOf": "Subtask of {name}",
+    "sub.collapse": "Collapse subtasks",
+    "sub.expand": "Expand subtasks",
+    "sub.progress": "Subtask progress {done}/{total}",
+    "sub.unparent": "Remove from parent",
+    "toast.parentHasChildren": "This task already has subtasks and can't become one",
   },
 };
 
@@ -290,6 +331,7 @@ function setLang(l) {
      phase 2 (dragging): movement > dragThreshold(10px) after armed starts the real drag
                          (following ghost + non-passive touchmove preventDefault scroll lock).
    A plain tap (no long-press, small movement) triggers no drag visuals; click passes through. */
+let dragTaskId = null; // task currently being dragged in the list view (gates the make-subtask drop zone)
 let suppressClickUntil = 0; // briefly suppress click after a drag ends, to avoid opening details by accident
 function clickSuppressed() { return Date.now() < suppressClickUntil; }
 
@@ -593,6 +635,14 @@ function openTaskDialog(prefill) {
     </div>
   </div>`;
   document.body.appendChild(ov);
+  // creating a subtask: show which parent it lands under
+  if (prefill.parent_id) {
+    const p = taskById(prefill.parent_id);
+    const hint = document.createElement("div");
+    hint.className = "td-parent-hint";
+    hint.textContent = tr("task.subtaskOf", { name: p ? p.name : "" });
+    ov.querySelector(".td-header").after(hint);
+  }
 
   const $q = sel => ov.querySelector(sel);
   const nameInp = $q(".td-name"), sel = $q(".td-section");
@@ -638,6 +688,7 @@ function openTaskDialog(prefill) {
       await createTask({
         name,
         section: sel.value,
+        ...(prefill.parent_id ? { parent_id: prefill.parent_id } : {}),
         assignee: $q(".td-assignee").value.trim(),
         start_on: $q(".td-start").value || null,
         due_on: $q(".td-due").value || null,
@@ -893,6 +944,7 @@ async function createTask(payload) {
 }
 async function deleteTask(id) {
   await papi("DELETE", "/tasks/" + encodeURIComponent(id));
+  state.tasks.forEach(t => { if (t.parent_id === id) delete t.parent_id; }); // orphaned subtasks become top-level
   state.tasks = state.tasks.filter(t => t.id !== id);
   if (state.detailId === id) closeDetail();
   render();
@@ -904,6 +956,7 @@ async function moveTask(taskId, targetSection, targetIndex) {
   // optimistic update
   const siblings = sectionTasks(targetSection).filter(x => x.id !== taskId);
   t.section = targetSection;
+  if (srcSection !== targetSection) childrenOf(taskId).forEach(k => { k.section = targetSection; }); // subtasks follow the parent
   siblings.splice(targetIndex, 0, t);
   siblings.forEach((x, i) => { x.order = i; });
   render();
@@ -919,6 +972,44 @@ async function moveTask(taskId, targetSection, targetIndex) {
     render();
   }
 }
+/* re-sequence the flat display order of a whole section after local reordering */
+function resequenceSection(sec) { flatSectionList(sec).forEach((t, i) => { t.order = i; }); }
+
+/* unified list-view drop operation: change section and/or parent, then re-sequence order.
+   dest = { section, parentId (null = top-level), index (position within the destination sibling group) } */
+async function placeTask(taskId, dest) {
+  const t = taskById(taskId);
+  if (!t) return;
+  const parentId = dest.parentId || null;
+  if (parentId) {
+    if (parentId === taskId) return;
+    const p = taskById(parentId);
+    if (!p || p.parent_id) return; // parent must exist and be top-level (one-level rule)
+    if (hasChildren(taskId)) { showToast(tr("toast.parentHasChildren"), true); return; }
+  }
+  const srcSection = t.section, srcParent = t.parent_id || null;
+  // optimistic local update
+  t.section = dest.section;
+  if (parentId) t.parent_id = parentId; else delete t.parent_id;
+  const sibs = (parentId ? childrenOf(parentId) : topTasks(dest.section)).filter(x => x.id !== taskId);
+  sibs.splice(Math.min(dest.index, sibs.length), 0, t);
+  if (srcSection !== dest.section) resequenceSection(srcSection);
+  resequenceSection(dest.section);
+  render();
+  try {
+    const patch = {};
+    if (srcSection !== dest.section) patch.section = dest.section;
+    if (srcParent !== parentId) patch.parent_id = parentId;
+    if (Object.keys(patch).length) await papi("PUT", "/tasks/" + encodeURIComponent(taskId), patch);
+    if (srcSection !== dest.section) await papi("POST", "/reorder", { section: srcSection, ids: flatSectionList(srcSection).map(x => x.id) });
+    await papi("POST", "/reorder", { section: dest.section, ids: flatSectionList(dest.section).map(x => x.id) });
+  } catch (e) {
+    showToast(tr("toast.moveFailed", { msg: e.message }), true);
+    await loadAll();
+    render();
+  }
+}
+
 async function addSection(name) {
   await papi("POST", "/sections", { name });
   state.sections.push(name);
@@ -1089,12 +1180,15 @@ function renderList(container) {
     header.addEventListener("drop", e => {
       e.preventDefault();
       const id = e.dataTransfer.getData("text/task-id");
-      if (id) moveTask(id, sec, sectionTasks(sec).filter(t => t.id !== id).length);
+      if (id) placeTask(id, { section: sec, parentId: null, index: topTasks(sec).filter(t => t.id !== id).length });
     });
     secEl.appendChild(header);
 
-    for (const task of tasks) {
-      secEl.appendChild(makeListRow(task, sec));
+    for (const task of topTasks(sec)) {
+      secEl.appendChild(makeListRow(task, sec, {}));
+      if (!isCollapsed(task.id)) {
+        for (const sub of childrenOf(task.id)) secEl.appendChild(makeListRow(sub, sec, { isSub: true }));
+      }
     }
 
     // add task: pop up the form dialog to fill all fields at once
@@ -1108,7 +1202,7 @@ function renderList(container) {
     secEl.addEventListener("drop", e => {
       e.preventDefault();
       const id = e.dataTransfer.getData("text/task-id");
-      if (id) moveTask(id, sec, sectionTasks(sec).filter(t => t.id !== id).length);
+      if (id) placeTask(id, { section: sec, parentId: null, index: topTasks(sec).filter(t => t.id !== id).length });
     });
     container.appendChild(secEl);
   }
@@ -1116,9 +1210,12 @@ function renderList(container) {
 
 /* list touch-drag helpers: clear drop highlight / hit testing (row -> before/after; section -> end) */
 function clearListDropMarks() {
-  $$(".list-row.drop-before, .list-row.drop-after").forEach(r => r.classList.remove("drop-before", "drop-after"));
+  $$(".list-row.drop-before, .list-row.drop-after, .list-row.drop-into").forEach(r => r.classList.remove("drop-before", "drop-after", "drop-into"));
 }
-function listDropTarget(x, y, selfRow) {
+/* list drop hit testing: center zone (25%-75%) of a valid top-level row = make-subtask ("into");
+   top/bottom halves = reorder before/after (on a subtask row: within the same parent);
+   section background = append as top-level ("end"); "invalid" = one-level rule forbids it (ignored) */
+function listDropTarget(x, y, selfRow, dragTask) {
   const hit = document.elementFromPoint(x, y);
   if (!hit) return null;
   const row = hit.closest(".list-row");
@@ -1126,16 +1223,30 @@ function listDropTarget(x, y, selfRow) {
     const secEl = row.closest(".list-section");
     if (!secEl) return null;
     const r = row.getBoundingClientRect();
-    return { row, section: secEl.dataset.section, before: y < r.top + r.height / 2 };
+    const rel = (y - r.top) / r.height;
+    const rowTask = taskById(row.dataset.taskId);
+    const isSub = row.classList.contains("sub-row");
+    const hasKids = dragTask ? hasChildren(dragTask.id) : false;
+    if (isSub && hasKids) return { row, section: secEl.dataset.section, zone: "invalid" }; // a parent can't become a sibling subtask
+    if (!isSub && rowTask && dragTask && dragTask.id !== rowTask.id && !hasKids && rel >= 0.25 && rel <= 0.75) {
+      return { row, section: secEl.dataset.section, zone: "into", parentId: rowTask.id };
+    }
+    return {
+      row, section: secEl.dataset.section,
+      zone: rel < 0.5 ? "before" : "after",
+      parentId: isSub && rowTask ? rowTask.parent_id || null : null,
+    };
   }
   const secEl = hit.closest(".list-section");
-  if (secEl) return { row: null, section: secEl.dataset.section };
+  if (secEl) return { row: null, section: secEl.dataset.section, zone: "end", parentId: null };
   return null;
 }
 
-function makeListRow(task, sec) {
+function makeListRow(task, sec, opts) {
+  opts = opts || {};
+  const isSub = !!opts.isSub;
   const row = document.createElement("div");
-  row.className = "list-row" + (task.completed ? " task-done" : "");
+  row.className = "list-row" + (task.completed ? " task-done" : "") + (isSub ? " sub-row" : "");
   row.dataset.taskId = task.id;
 
   const handle = document.createElement("span");
@@ -1148,9 +1259,11 @@ function makeListRow(task, sec) {
     e.dataTransfer.effectAllowed = "move";
     try { e.dataTransfer.setDragImage(row, 20, 12); } catch (_) {}
     row.classList.add("dragging");
+    dragTaskId = task.id;
   });
   handle.addEventListener("dragend", () => {
     row.classList.remove("dragging");
+    dragTaskId = null;
     clearListDropMarks();
   });
   // touch: hold the handle 180ms to start dragging (handle has touch-action:none, no scroll conflict)
@@ -1164,24 +1277,58 @@ function makeListRow(task, sec) {
     },
     onMove: (x, y) => {
       clearListDropMarks();
-      const t = listDropTarget(x, y, row);
-      if (t && t.row) t.row.classList.add(t.before ? "drop-before" : "drop-after");
+      const t = listDropTarget(x, y, row, task);
+      if (t && t.row) {
+        if (t.zone === "into") t.row.classList.add("drop-into");
+        else if (t.zone === "before") t.row.classList.add("drop-before");
+        else if (t.zone === "after") t.row.classList.add("drop-after");
+      }
     },
     onDrop: (x, y) => {
-      const t = listDropTarget(x, y, row);
-      if (!t) return;
-      const list = sectionTasks(t.section).filter(x => x.id !== task.id);
-      let idx = list.length;
-      if (t.row) {
-        idx = list.findIndex(x => x.id === t.row.dataset.taskId);
-        if (idx < 0) idx = list.length;
-        else if (!t.before) idx += 1;
+      const t = listDropTarget(x, y, row, task);
+      if (!t || t.zone === "invalid") return;
+      if (t.zone === "into") {
+        placeTask(task.id, { section: t.section, parentId: t.parentId, index: childrenOf(t.parentId).filter(x => x.id !== task.id).length });
+        return;
       }
-      moveTask(task.id, t.section, idx);
+      if (t.zone === "end" || !t.row) {
+        placeTask(task.id, { section: t.section, parentId: null, index: topTasks(t.section).filter(x => x.id !== task.id).length });
+        return;
+      }
+      const rowTask = taskById(t.row.dataset.taskId);
+      if (!rowTask) return;
+      const sibs = (t.parentId ? childrenOf(t.parentId) : topTasks(t.section)).filter(x => x.id !== task.id);
+      let idx = sibs.findIndex(x => x.id === rowTask.id);
+      if (idx < 0) idx = sibs.length; else if (t.zone === "after") idx += 1;
+      placeTask(task.id, { section: t.section, parentId: t.parentId, index: idx });
     },
     onEnd: clearListDropMarks,
   });
   row.appendChild(handle);
+
+  // subtask rows indent; parent rows get a disclosure triangle; other rows an alignment spacer
+  if (isSub) {
+    const ind = document.createElement("span");
+    ind.className = "sub-indent";
+    row.appendChild(ind);
+  } else if (hasChildren(task.id)) {
+    const tog = document.createElement("button");
+    tog.type = "button";
+    tog.className = "sub-toggle";
+    const collapsed = isCollapsed(task.id);
+    tog.textContent = collapsed ? "▸" : "▾";
+    tog.title = collapsed ? tr("sub.expand") : tr("sub.collapse");
+    tog.addEventListener("click", e => {
+      e.stopPropagation();
+      setCollapsed(task.id, !collapsed);
+      render();
+    });
+    row.appendChild(tog);
+  } else {
+    const sp = document.createElement("span");
+    sp.className = "sub-toggle sub-toggle-spacer";
+    row.appendChild(sp);
+  }
 
   row.appendChild(makeCheckbox(task));
 
@@ -1197,6 +1344,18 @@ function makeListRow(task, sec) {
     if (!clickSuppressed()) openDetail(task.id);
   });
   nameCell.appendChild(nameView);
+  // parent rows: subtle completed/total subtask progress badge
+  if (!isSub) {
+    const kids = childrenOf(task.id);
+    if (kids.length) {
+      const done = kids.filter(k => k.completed).length;
+      const badge = document.createElement("span");
+      badge.className = "sub-progress";
+      badge.textContent = done + "/" + kids.length;
+      badge.title = tr("sub.progress", { done, total: kids.length });
+      nameCell.appendChild(badge);
+    }
+  }
   row.appendChild(nameCell);
 
   // assignee
@@ -1227,27 +1386,35 @@ function makeListRow(task, sec) {
     if (!clickSuppressed()) openDetail(task.id);
   });
 
-  // drop target
+  // drop target: center zone (25%-75%) of a top-level row = make-subtask ("into"), edges = reorder
   row.addEventListener("dragover", e => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     const rect = row.getBoundingClientRect();
-    const before = e.clientY < rect.top + rect.height / 2;
-    row.classList.toggle("drop-before", before);
-    row.classList.toggle("drop-after", !before);
-    row.dataset.dropPos = before ? "before" : "after";
+    const rel = (e.clientY - rect.top) / rect.height;
+    const intoOk = !isSub && dragTaskId && dragTaskId !== task.id && !hasChildren(dragTaskId) && rel >= 0.25 && rel <= 0.75;
+    row.classList.toggle("drop-into", !!intoOk);
+    row.classList.toggle("drop-before", !intoOk && rel < 0.5);
+    row.classList.toggle("drop-after", !intoOk && rel >= 0.5);
+    row.dataset.dropPos = intoOk ? "into" : (rel < 0.5 ? "before" : "after");
   });
-  row.addEventListener("dragleave", () => row.classList.remove("drop-before", "drop-after"));
+  row.addEventListener("dragleave", () => row.classList.remove("drop-before", "drop-after", "drop-into"));
   row.addEventListener("drop", e => {
     e.preventDefault();
     e.stopPropagation();
     const id = e.dataTransfer.getData("text/task-id");
-    row.classList.remove("drop-before", "drop-after");
+    row.classList.remove("drop-before", "drop-after", "drop-into");
     if (!id || id === task.id) return;
-    const list = sectionTasks(sec).filter(t => t.id !== id);
-    let idx = list.findIndex(t => t.id === task.id);
-    if (row.dataset.dropPos === "after") idx += 1;
-    moveTask(id, sec, idx);
+    const pos = row.dataset.dropPos;
+    if (pos === "into" && !isSub) {
+      placeTask(id, { section: task.section, parentId: task.id, index: childrenOf(task.id).filter(x => x.id !== id).length });
+      return;
+    }
+    if (isSub && hasChildren(id)) { showToast(tr("toast.parentHasChildren"), true); return; } // one-level rule
+    const sibs = (isSub ? childrenOf(task.parent_id) : topTasks(sec)).filter(x => x.id !== id);
+    let idx = sibs.findIndex(x => x.id === task.id);
+    if (idx < 0) idx = sibs.length; else if (pos === "after") idx += 1;
+    placeTask(id, { section: sec, parentId: isSub ? task.parent_id : null, index: idx });
   });
   return row;
 }
@@ -1348,6 +1515,17 @@ function makeBoardCard(task, sec) {
   name.className = "task-name";
   name.textContent = task.name;
   card.appendChild(name);
+
+  // subtask card: muted parent reference under the title
+  if (task.parent_id) {
+    const p = taskById(task.parent_id);
+    if (p) {
+      const pl = document.createElement("div");
+      pl.className = "card-parent";
+      pl.textContent = "↳ " + p.name;
+      card.appendChild(pl);
+    }
+  }
 
   const meta = document.createElement("div");
   meta.className = "card-meta";
@@ -1654,7 +1832,8 @@ function renderTimeline(container) {
   let y = TL.headerH;
   const rowEls = [];
   for (const sec of state.sections) {
-    const secTasks = topoSortTasks(sectionTasks(sec).filter(t => bars.has(t.id)));
+    // subtasks nest under a dated parent; a subtask whose parent is missing/undated renders as a normal row
+    const secTasks = topoSortTasks(sectionTasks(sec).filter(t => bars.has(t.id) && (!t.parent_id || !bars.has(t.parent_id))));
     const secRow = document.createElement("div");
     secRow.className = "tl-row tl-section-row";
     secRow.style.height = TL.secRowH + "px";
@@ -1663,15 +1842,49 @@ function renderTimeline(container) {
     inner.appendChild(secRow);
     y += TL.secRowH;
 
+    // expanded parents are followed by their dated subtask rows; collapsed parents hide them
+    // (hidden rows never get a bar position, so dependency arrows to/from them are skipped automatically)
+    const rowsToRender = [];
     for (const t of secTasks) {
+      rowsToRender.push({ t, isSub: false });
+      if (!t.parent_id && !isCollapsed(t.id)) {
+        for (const c of topoSortTasks(childrenOf(t.id).filter(x => bars.has(x.id)))) rowsToRender.push({ t: c, isSub: true });
+      }
+    }
+    for (const { t, isSub } of rowsToRender) {
       const b = bars.get(t.id);
       const row = document.createElement("div");
       row.className = "tl-row";
       row.style.height = TL.rowH + "px";
       const nameEl = document.createElement("div");
-      nameEl.className = "tl-name" + (t.completed ? " task-done" : "");
-      nameEl.textContent = t.name;
+      nameEl.className = "tl-name" + (t.completed ? " task-done" : "") + (isSub ? " sub" : "");
       nameEl.title = t.name;
+      if (isSub) {
+        const ind = document.createElement("span");
+        ind.className = "sub-indent";
+        nameEl.appendChild(ind);
+      } else if (hasChildren(t.id)) {
+        const tog = document.createElement("button");
+        tog.type = "button";
+        tog.className = "sub-toggle";
+        const collapsed = isCollapsed(t.id);
+        tog.textContent = collapsed ? "▸" : "▾";
+        tog.title = collapsed ? tr("sub.expand") : tr("sub.collapse");
+        tog.addEventListener("click", e => {
+          e.stopPropagation();
+          setCollapsed(t.id, !collapsed);
+          render();
+        });
+        nameEl.appendChild(tog);
+      } else {
+        const sp = document.createElement("span");
+        sp.className = "sub-toggle sub-toggle-spacer";
+        nameEl.appendChild(sp);
+      }
+      const nm = document.createElement("span");
+      nm.className = "tl-name-text";
+      nm.textContent = t.name;
+      nameEl.appendChild(nm);
       nameEl.addEventListener("click", () => openDetail(t.id));
       row.appendChild(nameEl);
 
@@ -2259,6 +2472,57 @@ function renderDetail() {
     return sel;
   })()));
 
+  // parent task (one-level subtasks): candidates = top-level tasks excluding self;
+  // a task that already has subtasks cannot gain a parent (select disabled, with hint)
+  const kids = childrenOf(t.id);
+  body.appendChild(detailRow(tr("field.parent"), (() => {
+    const wrap = document.createElement("div");
+    wrap.className = "detail-parent";
+    const sel = document.createElement("select");
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = tr("select.none");
+    sel.appendChild(none);
+    for (const sec2 of state.sections) {
+      for (const o of topTasks(sec2)) {
+        if (o.id === t.id) continue;
+        const opt = document.createElement("option");
+        opt.value = o.id;
+        opt.textContent = o.name + " (" + o.section + ")";
+        sel.appendChild(opt);
+      }
+    }
+    sel.value = t.parent_id || "";
+    sel.disabled = kids.length > 0;
+    sel.addEventListener("change", () => {
+      const np = sel.value || null;
+      if (np) {
+        const p = taskById(np);
+        placeTask(t.id, { section: p ? p.section : t.section, parentId: np, index: childrenOf(np).length });
+      } else {
+        placeTask(t.id, { section: t.section, parentId: null, index: topTasks(t.section).filter(x => x.id !== t.id).length });
+      }
+    });
+    wrap.appendChild(sel);
+    if (kids.length) {
+      const hint = document.createElement("div");
+      hint.className = "parent-hint";
+      hint.textContent = tr("field.parentLocked");
+      wrap.appendChild(hint);
+    } else if (t.parent_id) {
+      const un = document.createElement("button");
+      un.type = "button";
+      un.className = "parent-unlink";
+      un.textContent = "✕";
+      un.title = tr("sub.unparent");
+      un.addEventListener("click", () => {
+        placeTask(t.id, { section: t.section, parentId: null, index: topTasks(t.section).filter(x => x.id !== t.id).length });
+      });
+      wrap.appendChild(un);
+    }
+    return wrap;
+  })()));
+
   body.appendChild(detailRow(tr("field.assignee"), textInput(t.assignee, v => updateTask(t.id, { assignee: v }), { list: "dl-assignees" })));
   // dates: iOS auto-fills today on the first tap of an empty date input; pre-fill on pointerdown to avoid "first tap commits and closes"
   const startInp = textInput(t.start_on || "", v => updateTask(t.id, { start_on: v || null }), { type: "date" });
@@ -2296,6 +2560,14 @@ function renderDetail() {
 
   const actions = document.createElement("div");
   actions.className = "detail-actions";
+  if (!t.parent_id) {
+    const addSub = document.createElement("button");
+    addSub.type = "button";
+    addSub.className = "add-subtask-btn";
+    addSub.textContent = tr("task.addSubtask");
+    addSub.addEventListener("click", () => openTaskDialog({ section: t.section, parent_id: t.id }));
+    actions.appendChild(addSub);
+  }
   const del = document.createElement("button");
   del.className = "btn-danger";
   del.textContent = tr("task.delete");

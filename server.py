@@ -74,6 +74,7 @@ AUTH_TOKEN = None
 TASK_FIELDS = {
     "name", "section", "assignee", "start_on", "due_on", "completed",
     "category", "effort", "priority", "dependencies", "notes", "link",
+    "parent_id",
 }
 
 PID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
@@ -572,12 +573,32 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"ok": True})
 
     # ---------- task ops ----------
+    @staticmethod
+    def _validate_parent(db, parent_id, task_id=None):
+        """one-level subtask rule; returns an error message, or None when valid"""
+        if not parent_id:
+            return None
+        if task_id and parent_id == task_id:
+            return "a task cannot be its own parent"
+        parent = next((t for t in db["tasks"] if t["id"] == parent_id), None)
+        if not parent:
+            return "parent task not found in this project"
+        if parent.get("parent_id"):
+            return "only one level of subtasks is allowed: the parent must be top-level"
+        if task_id and any(t.get("parent_id") == task_id for t in db["tasks"]):
+            return "a task that has subtasks cannot become a subtask"
+        return None
+
     def _create_task(self, pid, body):
         name = (body.get("name") or "").strip()
         if not name:
             return self._send_error_json(400, "name required")
         with LOCK:
             db = load_db(pid)
+            parent_id = body.get("parent_id") or None
+            err = self._validate_parent(db, parent_id)
+            if err:
+                return self._send_error_json(400, err)
             section = body.get("section") or (db["sections"][0] if db["sections"] else "To do")
             if section not in db["sections"]:
                 db["sections"].append(section)
@@ -598,6 +619,8 @@ class Handler(BaseHTTPRequestHandler):
                 "link": body.get("link") or "",
                 "order": order,
             }
+            if parent_id:
+                task["parent_id"] = parent_id
             db["tasks"].append(task)
             save_db(pid, db)
         self._send_json(task, 201)
@@ -608,6 +631,17 @@ class Handler(BaseHTTPRequestHandler):
             task = find_task(db, task_id)
             if not task:
                 return self._send_error_json(404, "task not found")
+            body = dict(body)
+            if "parent_id" in body:
+                new_parent = body.pop("parent_id") or None
+                err = self._validate_parent(db, new_parent, task_id)
+                if err:
+                    return self._send_error_json(400, err)
+                if new_parent:
+                    task["parent_id"] = new_parent
+                else:
+                    task.pop("parent_id", None)
+            old_section = task["section"]
             for k, v in body.items():
                 if k not in TASK_FIELDS:
                     continue
@@ -618,6 +652,11 @@ class Handler(BaseHTTPRequestHandler):
                 if k == "section" and v not in db["sections"]:
                     db["sections"].append(v)
                 task[k] = v
+            # subtasks follow their parent's section (one level deep)
+            if task["section"] != old_section:
+                for t in db["tasks"]:
+                    if t.get("parent_id") == task_id:
+                        t["section"] = task["section"]
             save_db(pid, db)
         self._send_json(task)
 
@@ -631,6 +670,8 @@ class Handler(BaseHTTPRequestHandler):
             for t in db["tasks"]:  # clean up dependency references
                 if task_id in t.get("dependencies", []):
                     t["dependencies"] = [d for d in t["dependencies"] if d != task_id]
+                if t.get("parent_id") == task_id:  # deleted parent's subtasks become top-level
+                    t.pop("parent_id", None)
             save_db(pid, db)
         self._send_json({"ok": True})
 
