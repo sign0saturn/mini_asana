@@ -104,10 +104,18 @@ function setCollapsed(pid, on) {
 /* persisted per project in localStorage: { [projectId]: { key, dir: "asc"|"desc" } } */
 const LIST_SORT_KEY = "mini_asana_list_sort";
 function listSortAll() { try { return JSON.parse(localStorage.getItem(LIST_SORT_KEY) || "{}"); } catch (_) { return {}; } }
-function getListSort() { const s = listSortAll()[state.projectId]; return s && s.key ? s : null; }
+/* stored shapes per project: absent = no preference -> DEFAULT due-date ascending (undated last);
+   {key, dir} = explicit sort; {key: null} = explicitly turned off (manual order). A saved choice always wins. */
+const LIST_SORT_DEFAULT = { key: "due_on", dir: "asc" };
+function getListSort() {
+  const s = listSortAll()[state.projectId];
+  if (!s) return LIST_SORT_DEFAULT; // fresh browser / first visit / cleared storage
+  return s.key ? s : null;
+}
 function setListSort(key, dir) {
   const all = listSortAll();
-  if (key) all[state.projectId] = { key, dir }; else delete all[state.projectId];
+  if (key) all[state.projectId] = { key, dir };
+  else all[state.projectId] = { key: null }; // explicit "off" — distinguishable from "no preference"
   try { localStorage.setItem(LIST_SORT_KEY, JSON.stringify(all)); } catch (_) {}
 }
 /* comparator choices (documented): text fields use localeCompare with "zh" (Chinese-aware);
