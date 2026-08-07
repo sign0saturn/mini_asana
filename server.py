@@ -21,6 +21,8 @@ REST API (tasks/sections within a project scope; <pid> is the project id):
   POST   /api/projects/<pid>/groups           create smart group {"name": str, "rules": obj}
   PUT    /api/projects/<pid>/groups/<gid>     update smart group (partial: name?/rules?)
   DELETE /api/projects/<pid>/groups/<gid>     delete smart group
+  POST   /api/projects/<pid>/archive_completed  move all completed tasks into the Archive section
+                                              (created when missing); returns {"archived": n, "sections"}
   POST   /api/projects/<pid>/reorder          {"section": str, "ids": [task_id, ...]} reorder within a section
 
 Legacy single-project paths (/api/tasks, /api/sections, /api/reorder, etc.)
@@ -425,8 +427,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._delete_project(pid)
             return self._send_error_json(405, "method not allowed")
 
-        # project-scoped tasks/sections/reorder/groups
-        m = re.fullmatch(r"/api/projects/([A-Za-z0-9_-]{1,64})(/(?:tasks|sections|reorder|groups)(?:/.*)?)", path)
+        # project-scoped tasks/sections/reorder/groups/archive_completed
+        m = re.fullmatch(r"/api/projects/([A-Za-z0-9_-]{1,64})(/(?:tasks|sections|reorder|groups|archive_completed)(?:/.*)?)", path)
         if m:
             pid, sub = m.group(1), m.group(2)
             if not os.path.isfile(project_file(pid)):
@@ -466,6 +468,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._delete_group(pid, unquote(sub[len("/groups/"):]))
         elif sub == "/reorder" and method == "POST":
             return self._reorder(pid, body)
+        elif sub == "/archive_completed" and method == "POST":
+            return self._archive_completed(pid)
         elif sub.startswith("/tasks/") and method == "PUT":
             return self._update_task(pid, unquote(sub[len("/tasks/"):]), body)
         elif sub.startswith("/tasks/") and method == "DELETE":
@@ -687,6 +691,25 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"ok": True})
 
     # ---------- section ops ----------
+    # ---------- archive ops ----------
+    def _archive_completed(self, pid):
+        """Move every completed task not already in "Archive" into the Archive section (created at the
+        end when missing). Idempotent: repeated calls archive 0 additional tasks. Incomplete tasks untouched."""
+        with LOCK:
+            db = load_db(pid)
+            if "Archive" not in db["sections"]:
+                db["sections"].append("Archive")
+            order = max((t["order"] for t in db["tasks"] if t["section"] == "Archive"), default=-1) + 1
+            n = 0
+            for t in db["tasks"]:
+                if t.get("completed") and t.get("section") != "Archive":
+                    t["section"] = "Archive"
+                    t["order"] = order
+                    order += 1
+                    n += 1
+            save_db(pid, db)
+        self._send_json({"archived": n, "sections": db["sections"]})
+
     # ---------- smart group ops (saved cross-section filter views; tasks are never modified) ----------
     @staticmethod
     def _validate_group_rules(rules):

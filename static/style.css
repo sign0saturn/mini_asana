@@ -72,6 +72,11 @@ input, textarea, select { font-family: inherit; font-size: 13px; }
   padding: 4px 10px; color: var(--text-dim); font-size: 13px; margin-bottom: 4px;
 }
 #btn-new-section:hover { background: var(--hover); color: var(--text); }
+#btn-archive-completed {
+  background: none; border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 10px; color: var(--text-dim); font-size: 13px; margin-bottom: 4px; flex: none;
+}
+#btn-archive-completed:hover { background: var(--hover); color: var(--text); }
 
 #view-container { flex: 1; overflow: auto; padding: 12px 24px 40px; }
 

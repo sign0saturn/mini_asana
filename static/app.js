@@ -390,6 +390,11 @@ const I18N = {
     "group.empty": "没有匹配的任务。可点击上方「编辑」调整规则。",
     "group.dragDisabled": "智能分组视图是筛选投影，不可拖拽排序",
     "confirm.deleteGroup": "删除智能分组「{name}」？任务本身不会被删除。",
+    "archive.btn": "归档已完成",
+    "archive.title": "把所有已完成任务移到 Archive 分组（没有该分组会自动创建）",
+    "archive.confirm": "归档 {n} 个已完成任务？它们会被移到 Archive 分组。",
+    "archive.done": "已归档 {n} 个任务",
+    "archive.none": "没有可归档的已完成任务",
   },
   en: {
     "nav.myTasks": "🏠 My tasks",
@@ -510,6 +515,11 @@ const I18N = {
     "group.empty": "No matching tasks. Use Edit above to adjust the rules.",
     "group.dragDisabled": "A smart group is a filtered projection — drag reorder is unavailable",
     "confirm.deleteGroup": "Delete smart group \"{name}\"? The tasks themselves are not deleted.",
+    "archive.btn": "Archive completed",
+    "archive.title": "Move all completed tasks to the Archive section (created when missing)",
+    "archive.confirm": "Archive {n} completed tasks? They will be moved to the Archive section.",
+    "archive.done": "Archived {n} tasks",
+    "archive.none": "No completed tasks to archive",
   },
 };
 
@@ -1395,6 +1405,12 @@ function render() {
   for (const [sel, l, t] of savedScroll) {
     const el = sel === "#view-container" ? c : $(sel);
     if (el) { el.scrollLeft = l; el.scrollTop = t; }
+  }
+  // entering the timeline view: position today ~18% from the left (once; drag/manual-scroll re-renders skip this).
+  // double rAF: run after layout settles — clientWidth/scrollWidth are unreliable during the synchronous render
+  if (_tlAutoScroll) {
+    _tlAutoScroll = false;
+    if (state.view === "timeline") requestAnimationFrame(() => requestAnimationFrame(scrollTimelineToToday));
   }
   if (state.detailId) {
     if (taskById(state.detailId)) renderDetail();
@@ -2320,6 +2336,21 @@ function boardDropTarget(x, y, selfCard) {
 
 /* ================= timeline view ================= */
 const TL = { dayW: 30, nameW: 220, headerH: 34, rowH: 34, secRowH: 30 };
+/* set when switching INTO the timeline tab; the next render scrolls so that today sits ~18% from the
+   viewport's left edge (falls back to the nearest end when today is outside the project's date range).
+   Manual scrolling and drag-commit re-renders do NOT touch it — the saved-scroll restore wins there. */
+let _tlAutoScroll = false;
+function scrollTimelineToToday() {
+  const tl = $("#timeline");
+  if (!tl || !TL.rangeStart || !TL.rangeEnd) return;
+  const td = today();
+  const max = Math.max(0, tl.scrollWidth - tl.clientWidth);
+  let target;
+  if (td <= TL.rangeStart) target = 0;                    // everything is in the future -> nearest = left end
+  else if (td >= TL.rangeEnd) target = max;               // everything is in the past -> nearest = right end
+  else target = TL.nameW + diffDays(TL.rangeStart, td) * TL.dayW - tl.clientWidth * 0.18;
+  tl.scrollLeft = Math.max(0, Math.min(max, target));
+}
 
 /*
  * Timeline row ordering: Kahn topological sort within each group.
@@ -2452,6 +2483,8 @@ function renderTimeline(container) {
   let rangeStart = addDays(minD, -7);
   rangeStart = addDays(rangeStart, -((rangeStart.getDay() + 6) % 7)); // align to Monday
   const rangeEnd = addDays(maxD, 14);
+  TL.rangeStart = rangeStart; // for scrollTimelineToToday (entering the timeline view)
+  TL.rangeEnd = rangeEnd;
   const totalDays = diffDays(rangeStart, rangeEnd) + 1;
   const trackW = totalDays * TL.dayW;
 
@@ -3325,6 +3358,7 @@ function init() {
     state.view = b.dataset.view;
     state.groupId = null; // leaving the smart group view back to the normal views
     saveGroupSel();
+    if (b.dataset.view === "timeline") _tlAutoScroll = true; // position today on entry (one-shot)
     render();
   }));
   // language switcher (sidebar bottom): switch + initial translation of static strings
@@ -3333,6 +3367,22 @@ function init() {
   document.addEventListener("click", closeFilterPop);
   applyI18n();
   updateLangSwitch();
+  // "归档已完成": one-click move of every completed task into the Archive section (server-side, idempotent)
+  $("#btn-archive-completed").addEventListener("click", () => {
+    const n = state.tasks.filter(t => t.completed && t.section !== "Archive").length;
+    if (!n) { showToast(tr("archive.none")); return; }
+    confirmDialog(tr("archive.confirm", { n }), async () => {
+      try {
+        const r = await papi("POST", "/archive_completed");
+        if (r.sections) state.sections = r.sections;
+        await loadAll();
+        render();
+        showToast(tr("archive.done", { n: r.archived }));
+      } catch (e) {
+        showToast(tr("toast.saveFailed", { msg: e.message }), true);
+      }
+    });
+  });
   // the "＋ 分组" button becomes an inline creator (replaces prompt)
   $("#btn-new-section").replaceWith(makeInlineCreator({
     buttonLabelKey: "btn.newSection",
