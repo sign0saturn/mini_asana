@@ -522,11 +522,12 @@ input[type="date"].inline-input { font-family: inherit; }
 .td-submit:hover:not(:disabled) { background: #3a63b8; }
 .td-submit:disabled { opacity: 0.5; cursor: default; }
 
-/* timeline drag-select date range */
-.tl-range-sel {
-  position: absolute; top: 4px; bottom: 4px; pointer-events: none; z-index: 3;
-  background: rgba(69,115,210,0.15); border: 1px dashed var(--accent); border-radius: 4px;
+/* timeline marquee (rubber-band multi-select) — superseded the old drag-to-create-range box */
+.tl-marquee {
+  position: absolute; pointer-events: none; z-index: 3;
+  background: rgba(69,115,210,0.12); border: 1px solid rgba(69,115,210,0.55); border-radius: 2px;
 }
+.tl-bar.tl-bar-marquee-hit { outline: 2px dashed #2f4a8f; outline-offset: 1px; }
 .tl-today { pointer-events: none; }
 
 @media (max-width: 768px) {

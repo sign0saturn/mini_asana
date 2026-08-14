@@ -2398,54 +2398,73 @@ function topoSortTasks(tasks) {
  * - Mouse held and dragged horizontally >5px: drag-select a date range (dashed-box visual feedback), start = drag start, due = drag end
  * - Touch keeps scroll priority; only tap (click) triggers single-day creation; interactions on bars are unaffected
  */
-function attachTrackCreate(track, sec, rangeStart) {
-  const dateAtX = px => addDays(rangeStart, Math.max(0, Math.floor(px / TL.dayW)));
-  let mouseHandledAt = 0;
+/* ---- timeline marquee (rubber-band multi-select) ----
+   Left-button drag starting on a BLANK chart area draws a translucent rectangle; bars intersecting it
+   are previewed live and join the selection on release (Shift held at press = ADD to the selection).
+   The rectangle also selects across rows/sections. Esc / blank click clear as before; drag of a selected
+   bar batch-moves the selection (attachBarDrag). Mouse only — touch keeps scroll/long-press untouched. */
+let _marqueeUntil = 0; // suppress the click that trails a marquee drag (it must not clear the new selection)
+function marqueeJustRan() { return Date.now() < _marqueeUntil; }
 
-  track.addEventListener("pointerdown", e => {
-    if (e.pointerType === "touch") return; // touch goes through click (tap); do not disturb scrolling
-    if (e.button > 0 || e.target.closest(".tl-bar")) return;
-    e.preventDefault();
-    const rect = track.getBoundingClientRect();
-    const startX = e.clientX - rect.left;
-    let moved = false, sel = null;
-    function onMove(ev) {
-      const curX = ev.clientX - rect.left;
-      if (!moved && Math.abs(curX - startX) > 5) {
+function attachMarquee(inner) {
+  inner.addEventListener("pointerdown", e => {
+    if (e.pointerType === "touch" || e.button !== 0) return; // touch: no marquee (accidental-activation guard)
+    if (e.target.closest(".tl-bar") || e.target.closest(".tl-name") || e.target.closest(".tl-header")) return;
+    const startX = e.clientX, startY = e.clientY, additive = e.shiftKey;
+    let box = null, moved = false, hit = new Set();
+    function refresh(ev) {
+      const x1 = Math.min(startX, ev.clientX), x2 = Math.max(startX, ev.clientX);
+      const y1 = Math.min(startY, ev.clientY), y2 = Math.max(startY, ev.clientY);
+      if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) > 5) {
         moved = true;
-        sel = document.createElement("div");
-        sel.className = "tl-range-sel";
-        track.appendChild(sel);
+        box = document.createElement("div");
+        box.className = "tl-marquee";
+        inner.appendChild(box);
       }
-      if (moved) {
-        sel.style.left = Math.min(startX, curX) + "px";
-        sel.style.width = Math.max(TL.dayW, Math.abs(curX - startX)) + "px";
-      }
-    }
-    function onUp(ev) {
-      track.removeEventListener("pointermove", onMove);
-      track.removeEventListener("pointerup", onUp);
-      track.removeEventListener("pointercancel", onUp);
-      mouseHandledAt = Date.now();
-      const curX = ev.clientX - rect.left;
-      let d1 = dateAtX(startX), d2 = dateAtX(curX);
-      if (d2 < d1) { const tmp = d1; d1 = d2; d2 = tmp; }
-      if (sel) sel.remove();
-      openTaskDialog({
-        section: sec,
-        start_on: fmtDate(d1),
-        due_on: fmtDate(moved ? d2 : d1),
+      if (!moved) return;
+      const ir = inner.getBoundingClientRect();
+      box.style.left = (x1 - ir.left) + "px";
+      box.style.top = (y1 - ir.top) + "px";
+      box.style.width = (x2 - x1) + "px";
+      box.style.height = (y2 - y1) + "px";
+      hit = new Set();
+      $$(".tl-bar[data-task-id]").forEach(b => {
+        const br = b.getBoundingClientRect();
+        if (br.left < x2 && br.right > x1 && br.top < y2 && br.bottom > y1) hit.add(b.dataset.taskId);
+      });
+      // live preview: additive = existing selection ∪ hit; otherwise just hit
+      $$(".tl-bar[data-task-id]").forEach(b => {
+        b.classList.toggle("tl-bar-marquee-hit", hit.has(b.dataset.taskId) && !state.tlSelected.has(b.dataset.taskId));
       });
     }
-    track.addEventListener("pointermove", onMove);
-    track.addEventListener("pointerup", onUp);
-    track.addEventListener("pointercancel", onUp);
+    function onMove(ev) { refresh(ev); }
+    function onUp(ev) {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      if (box) box.remove();
+      $$(".tl-bar.tl-bar-marquee-hit").forEach(b => b.classList.remove("tl-bar-marquee-hit"));
+      if (!moved) return;
+      _marqueeUntil = Date.now() + 300; // the trailing click must neither clear the selection nor create a task
+      if (!additive) state.tlSelected.clear();
+      for (const id of hit) state.tlSelected.add(id);
+      $$(".tl-bar[data-task-id]").forEach(b => b.classList.toggle("tl-bar-selected", state.tlSelected.has(b.dataset.taskId)));
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   });
+}
 
+function attachTrackCreate(track, sec, rangeStart) {
+  const dateAtX = px => addDays(rangeStart, Math.max(0, Math.floor(px / TL.dayW)));
+  // click/tap on a blank track area -> new-task dialog prefilled with that date.
+  // (A left-button DRAG on blank chart area is the marquee multi-select — see attachMarquee;
+  //  the old drag-to-create-a-range gesture was superseded by it.)
   track.addEventListener("click", e => {
-    if (Date.now() - mouseHandledAt < 400) return; // mouse path already handled at pointerup
-    if (e.target.closest(".tl-bar")) return;       // tap on a bar = open details, do not create
-    if (clickSuppressed()) return;                 // synthetic click right after a drag
+    if (marqueeJustRan()) return;              // the click trailing a marquee drag is not a create
+    if (e.target.closest(".tl-bar")) return;   // tap on a bar = open details, do not create
+    if (clickSuppressed()) return;             // synthetic click right after a drag
     const rect = track.getBoundingClientRect();
     const d = dateAtX(e.clientX - rect.left);
     openTaskDialog({ section: sec, start_on: fmtDate(d), due_on: fmtDate(d) });
@@ -2684,6 +2703,9 @@ function renderTimeline(container) {
   // dependency arrows (explicit sizes, avoiding percentage-height collapse)
   inner.appendChild(buildDepArrows(barPos, TL.nameW + trackW, y));
 
+  // rubber-band multi-select on blank chart areas (mouse only)
+  attachMarquee(inner);
+
   const skipped = state.tasks.length - dated.length;
   if (skipped > 0) {
     const hint = document.createElement("div");
@@ -2694,8 +2716,8 @@ function renderTimeline(container) {
     inner.appendChild(hint);
   }
 
-  // clicking blank areas outside bars: clear multi-selection
-  wrap.addEventListener("click", e => { if (!e.target.closest(".tl-bar")) clearTLSelect(); });
+  // clicking blank areas outside bars: clear multi-selection (but not the click trailing a marquee drag)
+  wrap.addEventListener("click", e => { if (marqueeJustRan()) return; if (!e.target.closest(".tl-bar")) clearTLSelect(); });
 
   wrap.appendChild(inner);
   container.appendChild(wrap);
@@ -2790,21 +2812,25 @@ function attachBarDrag(bar, task, b, xOf, isSub) {
       const changed = ns && nd && (ns !== fmtDate(b.start) || nd !== fmtDate(b.due));
       if (changed) {
         const delta = diffDays(b.due, parseDate(nd)); // shift in days of the dragged bar; followers offset by the same amount
-        const jobs = [];
-        if (!task.start_on && mode === "move") {
-          // single-day bar without start_on: whole-bar moves only change due_on, never fabricate a start_on
-          jobs.push([task.id, { due_on: nd }]);
+        if (batch.length) {
+          // batch move: one atomic bulk_offset write for the whole selection, then a single re-render.
+          // The server shifts due_on always and start_on only when present — same rule as the single-drag path.
+          const ids = [task.id, ...batch.map(it => it.id)];
+          try {
+            const r = await papi("POST", "/tasks/bulk_offset", { task_ids: ids, days: delta });
+            for (const u of r.updated || []) { const t = taskById(u.id); if (t) Object.assign(t, u); }
+            render();
+          } catch (err) {
+            showToast(tr("toast.saveFailed", { msg: err.message }), true);
+            await loadAll();
+          }
         } else {
-          // edge drags (l/r) "pull out" a start_on; only then is start_on written
-          jobs.push([task.id, { start_on: ns, due_on: nd }]);
+          // single bar: per-task PUT. A start-less bar moved as a whole only changes due_on (never fabricate start_on);
+          // edge drags (l/r) "pull out" a start_on — only then is start_on written.
+          const patch = (!task.start_on && mode === "move") ? { due_on: nd } : { start_on: ns, due_on: nd };
+          await updateTask(task.id, patch, { silent: true });
+          render();
         }
-        for (const it of batch) {
-          const ns2 = fmtDate(addDays(it.s, delta)), nd2 = fmtDate(addDays(it.d, delta));
-          jobs.push(it.hadStart ? [it.id, { start_on: ns2, due_on: nd2 }] : [it.id, { due_on: nd2 }]);
-        }
-        // silent PUTs one by one, single re-render after all complete (render preserves scroll position internally)
-        for (const [id, patch] of jobs) await updateTask(id, patch, { silent: true });
-        render();
       } else {
         positionBar(bar, b, xOf, isSub);
         for (const it of batch) positionBar(it.bar, { start: it.s, due: it.d }, xOf, it.isSub);

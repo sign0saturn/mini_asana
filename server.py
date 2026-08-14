@@ -23,6 +23,9 @@ REST API (tasks/sections within a project scope; <pid> is the project id):
   DELETE /api/projects/<pid>/groups/<gid>     delete smart group
   POST   /api/projects/<pid>/archive_completed  move all completed tasks into the Archive section
                                               (created when missing); returns {"archived": n, "sections"}
+  POST   /api/projects/<pid>/tasks/bulk_offset  {"task_ids": [...], "days": N} shift start_on/due_on of
+                                              many tasks by N days in one atomic write (no start_on -> only
+                                              due_on moves; no dependency cascade); returns {"updated","missing"}
   POST   /api/projects/<pid>/reorder          {"section": str, "ids": [task_id, ...]} reorder within a section
 
 Legacy single-project paths (/api/tasks, /api/sections, /api/reorder, etc.)
@@ -49,6 +52,7 @@ Auth (simple token auth for public exposure, enabled by default):
   - Port can be overridden with --port or MINI_ASANA_PORT (default 8787).
 """
 import argparse
+import datetime
 import hmac
 import json
 import mimetypes
@@ -332,6 +336,13 @@ def find_task(db, task_id):
     return None
 
 
+def shift_date_str(s, days):
+    """'YYYY-MM-DD' + N days -> 'YYYY-MM-DD' (None/empty passes through)."""
+    if not s:
+        return s
+    return (datetime.date.fromisoformat(s) + datetime.timedelta(days=days)).isoformat()
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "mini-asana/1.0"
     protocol_version = "HTTP/1.1"
@@ -468,6 +479,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._delete_group(pid, unquote(sub[len("/groups/"):]))
         elif sub == "/reorder" and method == "POST":
             return self._reorder(pid, body)
+        elif sub == "/tasks/bulk_offset" and method == "POST":
+            return self._bulk_offset(pid, body)
         elif sub == "/archive_completed" and method == "POST":
             return self._archive_completed(pid)
         elif sub.startswith("/tasks/") and method == "PUT":
@@ -690,7 +703,33 @@ class Handler(BaseHTTPRequestHandler):
             save_db(pid, db)
         self._send_json({"ok": True})
 
-    # ---------- section ops ----------
+    # ---------- bulk ops ----------
+    def _bulk_offset(self, pid, body):
+        """Shift start_on/due_on of many tasks by the same number of days in ONE atomic write
+        (timeline marquee/multi-select batch move). Tasks without start_on keep it empty (only due_on
+        moves); dependencies are not cascaded — exactly like the single-bar drag."""
+        ids = body.get("task_ids")
+        days = body.get("days")
+        if not isinstance(ids, list) or not ids or not all(isinstance(i, str) for i in ids):
+            return self._send_error_json(400, "task_ids must be a non-empty list")
+        if isinstance(days, bool) or not isinstance(days, int) or days == 0:
+            return self._send_error_json(400, "days must be a non-zero integer")
+        with LOCK:
+            db = load_db(pid)
+            idset = set(ids)
+            updated = []
+            for t in db["tasks"]:
+                if t["id"] not in idset:
+                    continue
+                if t.get("start_on"):
+                    t["start_on"] = shift_date_str(t["start_on"], days)
+                if t.get("due_on"):
+                    t["due_on"] = shift_date_str(t["due_on"], days)
+                updated.append(t)
+            save_db(pid, db)
+        missing = sorted(idset - {t["id"] for t in updated})
+        self._send_json({"updated": updated, "missing": missing, "days": days})
+
     # ---------- archive ops ----------
     def _archive_completed(self, pid):
         """Move every completed task not already in "Archive" into the Archive section (created at the
