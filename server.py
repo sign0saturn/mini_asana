@@ -38,16 +38,24 @@ Data layout:
   first project and the old file is renamed data/tasks.json.migrated; a fresh
   install auto-creates a default project.
 
-Static files: / -> static/index.html, /static/* -> static/*
+Static files: / -> static/index.html, /static/* -> static/*, /login -> login page
 
 Auth (simple token auth for public exposure, enabled by default):
   - On first start, a 32-char hex token is generated into data/auth_token.txt
-    (mode 600); existing files are read as-is.
-  - All requests except the login page (including /, /app.js, /style.css, /api/*)
-    require a valid token, accepted two ways: "Authorization: Bearer <token>"
-    header or ?token=<token> query param.
-  - API requests without a token get 401 {"error":"unauthorized"}; page requests
-    get the login page HTML.
+    (mode 600); a malformed token file is regenerated at startup.
+  - The static shell (/, /app.js, /style.css, /login) is PUBLIC — it contains no
+    data (the source is public anyway). /api/* requires "Authorization: Bearer
+    <token>". URL query tokens (?token=) are NOT accepted: they leak via logs,
+    history and referrers. The frontend migrates old ?token= bookmarks into
+    localStorage once (validated through the Bearer flow), then strips the query.
+  - Client tokens must match ^[0-9a-f]{32}$ before comparison (keeps
+    hmac.compare_digest safe from non-ASCII/garbage input).
+  - Every response carries Referrer-Policy: no-referrer, X-Content-Type-Options:
+    nosniff, X-Frame-Options: DENY, a minimal CSP (frame-ancestors/object-src/
+    base-uri) and Cache-Control: no-store.
+  - Request bodies are capped at 1 MiB, must be JSON objects; task fields are
+    type-checked (string lengths, bool completed, YYYY-MM-DD dates, http/https
+    links only, start->due spans <= 3700 days).
   - For local dev, auth can be disabled with --no-auth or MINI_ASANA_NO_AUTH=1.
   - Port can be overridden with --port or MINI_ASANA_PORT (default 8787).
 """
@@ -63,7 +71,7 @@ import secrets
 import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import unquote, urlparse
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE, "data")
@@ -87,7 +95,17 @@ TASK_FIELDS = {
 }
 
 PID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+TOKEN_RE = re.compile(r"[0-9a-f]{32}")
+DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+MAX_BODY_BYTES = 1024 * 1024   # request-body cap: 1 MiB
+MAX_TASK_SPAN_DAYS = 3700      # the calendar expands every day of a task's range — reject absurd spans
 DEFAULT_SECTIONS = ["To do", "In progress"]
+
+# task string-field length limits (notes get more room)
+TASK_STR_LIMITS = {
+    "name": 500, "section": 500, "assignee": 500, "category": 500, "effort": 500,
+    "priority": 500, "link": 500, "parent_id": 500, "notes": 20000,
+}
 
 LOGIN_HTML = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -150,7 +168,9 @@ LOGIN_HTML = """<!DOCTYPE html>
   document.getElementById("tip").textContent = S.tip;
   document.getElementById("tok").placeholder = S.ph;
   document.getElementById("enter").textContent = S.enter;
-  function go(t) { location.replace("/?token=" + encodeURIComponent(t)); }
+  // the token is already in localStorage by the time go() runs; / is a public static shell,
+  // the app boots from the stored token via the Authorization: Bearer header (no query tokens)
+  function go() { location.replace("/"); }
   function err(m) { document.getElementById("err").textContent = m; }
   function valid(t, ok, bad) {
     fetch("/api/tasks", { headers: { "Authorization": "Bearer " + t } })
@@ -182,12 +202,18 @@ LOGIN_HTML = """<!DOCTYPE html>
 
 
 def load_or_create_token():
-    """Read data/auth_token.txt; generate a 32-char hex token (mode 600) if missing."""
+    """Read data/auth_token.txt; generate a 32-char hex token (mode 600) when the file is
+    missing, and also when its content is malformed (a corrupt token file must not become
+    the effective auth secret — regenerate instead)."""
     if os.path.exists(TOKEN_FILE):
         with open(TOKEN_FILE, encoding="utf-8") as f:
-            return f.read().strip()
+            token = f.read().strip()
+        if TOKEN_RE.fullmatch(token):
+            return token
+        print("[auth] data/auth_token.txt 内容格式非法（应为 32 位小写 hex），已重新生成 token")
     token = secrets.token_hex(16)  # 32 hex chars
-    fd = os.open(TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    # O_TRUNC covers the malformed-file regeneration path (file already exists)
+    fd = os.open(TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(token + "\n")
     os.chmod(TOKEN_FILE, 0o600)
@@ -343,6 +369,57 @@ def shift_date_str(s, days):
     return (datetime.date.fromisoformat(s) + datetime.timedelta(days=days)).isoformat()
 
 
+def _valid_date_str(s):
+    """Strict YYYY-MM-DD with a real calendar date."""
+    if not DATE_RE.fullmatch(s):
+        return False
+    try:
+        datetime.date.fromisoformat(s)
+        return True
+    except ValueError:
+        return False
+
+
+def validate_task_fields(body):
+    """Strict per-field validation for task create/update bodies (unknown keys are ignored,
+    same as the writers which filter by TASK_FIELDS). Returns an error message, or None."""
+    for k, v in body.items():
+        if k not in TASK_FIELDS:
+            continue
+        if k in TASK_STR_LIMITS:
+            if not isinstance(v, str):
+                return f"field '{k}' must be a string"
+            if len(v) > TASK_STR_LIMITS[k]:
+                return f"field '{k}' is too long (max {TASK_STR_LIMITS[k]} chars)"
+        elif k == "completed":
+            if not isinstance(v, bool):
+                return "field 'completed' must be a boolean"
+        elif k in ("start_on", "due_on"):
+            if not isinstance(v, str):
+                return f"field '{k}' must be a string"
+            if v and not _valid_date_str(v):
+                return f"field '{k}' must be '' or a valid YYYY-MM-DD date"
+        elif k == "dependencies":
+            if not isinstance(v, list) or not all(isinstance(d, str) for d in v):
+                return "field 'dependencies' must be a list of strings"
+    name = body.get("name")
+    if name is not None and isinstance(name, str) and not name.strip():
+        return "field 'name' must not be empty"
+    link = body.get("link")
+    if isinstance(link, str) and link and not link.startswith(("http://", "https://")):
+        return "field 'link' must start with http:// or https://"
+    return None
+
+
+def task_span_error(start_on, due_on):
+    """Reject absurd start->due spans (the calendar view expands every single day of a range)."""
+    if start_on and due_on:
+        span = abs((datetime.date.fromisoformat(due_on) - datetime.date.fromisoformat(start_on)).days)
+        if span > MAX_TASK_SPAN_DAYS:
+            return f"start_on -> due_on span exceeds {MAX_TASK_SPAN_DAYS} days"
+    return None
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "mini-asana/1.0"
     protocol_version = "HTTP/1.1"
@@ -352,9 +429,15 @@ class Handler(BaseHTTPRequestHandler):
         # Authenticated single-user app served through a CDN/edge tunnel: NOTHING may
         # ever be edge- or browser-cached (a cached login page or stale app.js would
         # be served to everyone). Central override so every response — static files,
-        # API JSON, the login page, and errors — carries no-store.
+        # API JSON, the login page, and errors — carries no-store plus the security
+        # headers (no script-src/style-src in the CSP on purpose: the login page is an
+        # inline script and the app uses inline styles).
         super().send_response(code, message)
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'; object-src 'none'; base-uri 'none'")
 
     def _send_json(self, obj, status=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -368,45 +451,56 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"error": msg}, status)
 
     def _read_body(self):
-        length = int(self.headers.get("Content-Length") or 0)
-        if length <= 0:
-            return {}
-        raw = self.rfile.read(length)
+        """Read and validate the JSON request body.
+        Returns (dict, None) on success, or (None, (status, message)) on failure:
+        Content-Length missing counts as 0; a non-numeric/negative Content-Length is a 400;
+        over 1 MiB is a 413 (the body is NOT read); undecodable JSON is a 400; a JSON top
+        level that is not an object is a 400."""
+        raw = self.headers.get("Content-Length")
+        length = 0
+        if raw is not None:
+            if not re.fullmatch(r"\d+", raw.strip()):
+                return None, (400, "invalid Content-Length")
+            length = int(raw.strip(), 10)
+            if length > MAX_BODY_BYTES:
+                return None, (413, "request body too large (max 1 MiB)")
+        if length == 0:
+            return {}, None
+        data = self.rfile.read(length)
         try:
-            return json.loads(raw.decode("utf-8"))
+            body = json.loads(data.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
-            return None
+            return None, (400, "invalid JSON")
+        if not isinstance(body, dict):
+            return None, (400, "JSON body must be an object")
+        return body, None
 
     def log_message(self, fmt, *args):  # quiet logging
         pass
 
     # ---------- auth ----------
     def _client_token(self):
-        """Extract the token from the Authorization: Bearer header or the ?token= query param."""
+        """Extract the token from the Authorization: Bearer header ONLY.
+        URL query tokens (?token=) were removed: they leak into server logs, browser
+        history and referrers. Old bookmarks are migrated by the frontend instead."""
         auth = self.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
             return auth[7:].strip()
-        qs = parse_qs(urlparse(self.path).query)
-        vals = qs.get("token")
-        return vals[0].strip() if vals else None
+        return None
 
     def _authorized(self):
         if not AUTH_ENABLED:
             return True
         tok = self._client_token()
-        return bool(tok) and bool(AUTH_TOKEN) and hmac.compare_digest(tok, AUTH_TOKEN)
+        # strict format gate BEFORE compare_digest: garbage/non-ASCII tokens would
+        # otherwise raise TypeError inside hmac.compare_digest (traceback noise)
+        if not tok or not AUTH_TOKEN or not TOKEN_RE.fullmatch(tok):
+            return False
+        return hmac.compare_digest(tok, AUTH_TOKEN)
 
-    def _reject(self):
-        """API requests get 401 JSON; page requests get the login page HTML."""
-        if urlparse(self.path).path.startswith("/api/"):
-            self._send_json({"error": "unauthorized"}, 401)
-        else:
-            body = LOGIN_HTML.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+    def _reject_api(self):
+        self.close_connection = True  # an unread request body must not poison keep-alive
+        self._send_json({"error": "unauthorized"}, 401)
 
     # ---------- routing ----------
     def _route(self, method):
@@ -414,9 +508,12 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         body = None
         if method in ("POST", "PUT", "PATCH"):
-            body = self._read_body()
-            if body is None:
-                return self._send_error_json(400, "invalid JSON")
+            body, err = self._read_body()
+            if err is not None:
+                status, msg = err
+                if status == 413:
+                    self.close_connection = True  # the oversized body stays unread
+                return self._send_error_json(status, msg)
 
         # project collection
         if path == "/api/projects":
@@ -456,6 +553,8 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/"):
             return self._send_error_json(404, "not found")
         if method == "GET":
+            if path == "/login":
+                return self._serve_login()
             return self._serve_static(path)
         self._send_error_json(404, "not found")
 
@@ -494,29 +593,39 @@ class Handler(BaseHTTPRequestHandler):
         self._send_error_json(404, "not found")
 
     def do_GET(self):
-        if not self._authorized():
-            return self._reject()
+        # the static shell (/, /app.js, /style.css, /login) is public — it holds no data;
+        # every /api/* request needs a valid Bearer token
+        if urlparse(self.path).path.startswith("/api/") and not self._authorized():
+            return self._reject_api()
         self._route("GET")
 
     def do_POST(self):
         if not self._authorized():
-            return self._reject()
+            return self._reject_api()
         self._route("POST")
 
     def do_PUT(self):
         if not self._authorized():
-            return self._reject()
+            return self._reject_api()
         self._route("PUT")
 
     def do_PATCH(self):
         if not self._authorized():
-            return self._reject()
+            return self._reject_api()
         self._route("PATCH")
 
     def do_DELETE(self):
         if not self._authorized():
-            return self._reject()
+            return self._reject_api()
         self._route("DELETE")
+
+    def _serve_login(self):
+        body = LOGIN_HTML.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     # ---------- project ops ----------
     @staticmethod
@@ -618,9 +727,15 @@ class Handler(BaseHTTPRequestHandler):
         return None
 
     def _create_task(self, pid, body):
+        err = validate_task_fields(body)
+        if err:
+            return self._send_error_json(400, err)
         name = (body.get("name") or "").strip()
         if not name:
             return self._send_error_json(400, "name required")
+        span_err = task_span_error(body.get("start_on") or None, body.get("due_on") or None)
+        if span_err:
+            return self._send_error_json(400, span_err)
         with LOCK:
             db = load_db(pid)
             parent_id = body.get("parent_id") or None
@@ -654,12 +769,20 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(task, 201)
 
     def _update_task(self, pid, task_id, body):
+        err = validate_task_fields(body)
+        if err:
+            return self._send_error_json(400, err)
         with LOCK:
             db = load_db(pid)
             task = find_task(db, task_id)
             if not task:
                 return self._send_error_json(404, "task not found")
             body = dict(body)
+            # span limit applies to the MERGED dates (patch values win over stored ones)
+            span_err = task_span_error(body.get("start_on", task.get("start_on")) or None,
+                                       body.get("due_on", task.get("due_on")) or None)
+            if span_err:
+                return self._send_error_json(400, span_err)
             if "parent_id" in body:
                 new_parent = body.pop("parent_id") or None
                 err = self._validate_parent(db, new_parent, task_id)
@@ -887,19 +1010,12 @@ class Handler(BaseHTTPRequestHandler):
         ctype = mimetypes.guess_type(full)[0] or "application/octet-stream"
         with open(full, "rb") as f:
             data = f.read()
-        # when index.html is served after ?token= auth, append the token to static
-        # asset links too, so browser navigation requests (which cannot carry the
-        # Authorization header) also pass validation
-        if AUTH_ENABLED and clean == "index.html":
-            qs = parse_qs(urlparse(self.path).query)
-            qt = (qs.get("token") or [None])[0]
-            if qt and AUTH_TOKEN and hmac.compare_digest(qt.strip(), AUTH_TOKEN):
-                tok = qt.strip()
-                # append each asset's mtime as &v= cache-buster so deploys bypass stale caches
-                for name, ref in (("app.js", "src"), ("style.css", "href")):
-                    suffix = f'?token={tok}&v={self._asset_version(name)}'
-                    data = data.replace(f'{ref}="/{name}"'.encode("utf-8"),
-                                        f'{ref}="/{name}{suffix}"'.encode("utf-8"))
+        # append each asset's mtime as a ?v= cache-buster so deploys bypass stale caches
+        # (no token in URLs — static files are public and auth lives in the Bearer header)
+        if clean == "index.html":
+            for name, ref in (("app.js", "src"), ("style.css", "href")):
+                data = data.replace(f'{ref}="/{name}"'.encode("utf-8"),
+                                    f'{ref}="/{name}?v={self._asset_version(name)}"'.encode("utf-8"))
         self.send_response(200)
         self.send_header("Content-Type", ctype + ("; charset=utf-8" if ctype.startswith("text/") or ctype == "application/javascript" else ""))
         self.send_header("Content-Length", str(len(data)))

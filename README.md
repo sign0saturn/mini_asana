@@ -58,16 +58,20 @@ Open `http://127.0.0.1:8787` in your browser.
 
 ### Auth (enabled by default)
 
-- **On first start** a 32-char hex token is generated into `data/auth_token.txt` (file mode 600) with a notice printed to the terminal; later starts read the file as-is.
-- The browser shows a login page first; enter the token to continue (stored in localStorage, sent automatically afterwards).
-- Programmatic access carries the token in one of two ways:
-  - `Authorization: Bearer <token>` request header
-  - `?token=<token>` query parameter
-- After `?token=` page auth, the served `index.html` has its `/app.js` and `/style.css` links automatically rewritten to carry the token plus a `&v=` version fingerprint (file mtime), so those asset requests pass auth and updated files bypass stale caches.
-- Without a token: API requests get `401 {"error":"unauthorized"}`; page requests get the login page.
+- **On first start** a 32-char hex token is generated into `data/auth_token.txt` (file mode 600) with a notice printed to the terminal; later starts read the file as-is. A malformed token file (not 32 lowercase hex chars) is regenerated automatically at startup.
+- **Auth model**: the static shell (`/`, `/app.js`, `/style.css`, `/login`) is public — it contains no data. Every `/api/*` request requires `Authorization: Bearer <token>`; anything else gets `401 {"error":"unauthorized"}`.
+- **No URL query tokens**: `?token=` is NOT accepted by the API (query strings leak into logs, browser history and referrers). Old bookmarks still work once: the app validates a well-formed `?token=` through the Bearer flow, stores it in localStorage, and strips the query from the address bar.
+- The browser flow: no/expired token → redirect to the public `/login` page; enter the token there (validated against the API, stored in localStorage) → back to the app.
 - **Disable auth** (local development only): `python3 server.py --no-auth`, or env var `MINI_ASANA_NO_AUTH=1`.
 - **Change port**: `python3 server.py --port 9000`, or env var `MINI_ASANA_PORT=9000` (default 8787).
-- To use your own token: write it into `data/auth_token.txt` (a single line of text) before starting.
+- To use your own token: write it into `data/auth_token.txt` (a single line of 32 hex chars) before starting.
+
+### Security
+
+- **Response headers** (on every response, including errors and static files): `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'; object-src 'none'; base-uri 'none'`, plus `Cache-Control: no-store`. The CSP deliberately omits `script-src`/`style-src` (the login page is an inline script).
+- **Request limits**: bodies are capped at 1 MiB (413 beyond, body never read), `Content-Length` must be a valid non-negative integer, the JSON top level must be an object.
+- **Task field validation** (POST/PUT): strings with length caps (name ≤500 and non-empty, notes ≤20000, others ≤500), `completed` must be a real boolean, `start_on`/`due_on` must be `""` or a valid `YYYY-MM-DD`, `dependencies` must be a string list, `link` must start with `http://`/`https://` (the UI renders other protocols as plain text), and a task's start→due span may not exceed 3700 days.
+- **Token rotation**: run `deploy/rotate_token.sh` on the server — it writes a fresh 32-hex token to `data/auth_token.txt` (mode 600) and restarts the launchd service (`MINIASANA_LABEL` overrides the service label). All existing sessions are invalidated; log in again on every device.
 
 You can also start with `./start.sh` (equivalent to `python3 server.py`, auth enabled).
 

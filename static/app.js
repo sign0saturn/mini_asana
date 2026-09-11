@@ -3348,35 +3348,40 @@ function renderDetail() {
   });
   actions.appendChild(del);
   if (t.link) {
-    const a = document.createElement("a");
-    a.className = "detail-link";
-    a.href = t.link;
-    a.target = "_blank";
-    a.rel = "noopener";
-    a.textContent = tr("task.openInAsana");
-    actions.appendChild(a);
+    if (/^https?:\/\//i.test(t.link)) {
+      const a = document.createElement("a");
+      a.className = "detail-link";
+      a.href = t.link;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = tr("task.openInAsana");
+      actions.appendChild(a);
+    } else {
+      // protocol whitelist: non-http(s) links render as plain text, never as navigable anchors
+      const s = document.createElement("span");
+      s.className = "detail-link";
+      s.textContent = t.link;
+      actions.appendChild(s);
+    }
   }
   body.appendChild(actions);
 }
 
 /* ================= init ================= */
-function showLogin(msg) {
-  const ov = $("#login-overlay");
-  ov.classList.remove("hidden");
-  if (msg) $("#login-error").textContent = msg;
-  setTimeout(() => $("#login-token").focus(), 0);
-}
-function hideLogin() {
-  $("#login-overlay").classList.add("hidden");
-  $("#login-error").textContent = "";
-  $("#login-token").value = "";
+function showLogin() {
+  // auth lives on the public /login page now: any missing/bad token lands there
+  // (the API has already cleared the stored token on 401 — clear again, idempotently)
+  clearToken();
+  location.replace("/login");
 }
 
 function init() {
-  // ?token= brought in by the login page redirect: store in localStorage and clean the address bar
+  // legacy ?token= bookmark migration (last hurrah): a well-formed token is stored and
+  // validated through the normal Bearer boot below; the query is stripped from the address
+  // bar either way so it never lingers in history. Server no longer accepts query tokens.
   const urlTok = new URLSearchParams(location.search).get("token");
   if (urlTok) {
-    setToken(urlTok);
+    if (/^[0-9a-f]{32}$/.test(urlTok)) setToken(urlTok);
     history.replaceState(null, "", location.pathname);
   }
 
@@ -3442,36 +3447,14 @@ function init() {
   backdrop.addEventListener("click", closeMenu);
   $$("#sidebar .nav-item").forEach(n => n.addEventListener("click", closeMenu));
 
-  // logout: clear the token and go back to / (the server will return the login page)
+  // logout: clear the token and go to the (public) login page
   $("#btn-logout").addEventListener("click", () => {
     clearToken();
-    location.href = "/";
+    location.replace("/login");
   });
 
-  // login overlay submit: save the token and try loading data
-  $("#login-form").addEventListener("submit", async e => {
-    e.preventDefault();
-    const t = $("#login-token").value.trim();
-    if (!t) return;
-    setToken(t);
-    try {
-      await boot();
-      hideLogin();
-      render();
-    } catch (err) {
-      showLogin(err.message === "unauthorized" ? tr("login.badToken") : tr("app.loadFailed", { msg: err.message }));
-    }
-  });
-
-  if (!getToken()) {
-    // no token: try unauthenticated access first (--no-auth mode lets you straight in); show the login overlay on 401
-    boot().then(render).catch(e => {
-      if (e.message !== "unauthorized") {
-        $("#view-container").innerHTML = `<div class="tl-empty-hint">${esc(tr("app.loadFailed", { msg: e.message }))}</div>`;
-      }
-    });
-    return;
-  }
+  // boot: works straight away in --no-auth mode or with a valid stored/migrated token;
+  // a 401 anywhere triggers clearToken + redirect to /login inside api()
   boot().then(render).catch(e => {
     if (e.message !== "unauthorized") {
       $("#view-container").innerHTML = `<div class="tl-empty-hint">${esc(tr("app.loadFailed", { msg: e.message }))}</div>`;

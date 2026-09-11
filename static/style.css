@@ -340,29 +340,6 @@ input[type="date"].inline-input { font-family: inherit; }
 #btn-logout:hover { background: var(--hover); color: var(--text); }
 #topbar { align-items: center; }
 
-#login-overlay {
-  position: fixed; inset: 0; z-index: 100; background: var(--sidebar-bg);
-  display: flex; align-items: center; justify-content: center;
-}
-#login-overlay.hidden { display: none; }
-.login-card {
-  background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 36px 40px;
-  width: 320px; box-shadow: 0 4px 16px rgba(0,0,0,0.06); text-align: center;
-}
-.login-logo { font-weight: 700; font-size: 18px; color: #e06a5a; margin-bottom: 8px; }
-.login-tip { color: var(--text-dim); font-size: 13px; margin-bottom: 20px; }
-.login-card input {
-  width: 100%; box-sizing: border-box; padding: 9px 12px; font-size: 14px; margin-bottom: 12px;
-  border: 1px solid var(--border); border-radius: 6px; outline: none;
-}
-.login-card input:focus { border-color: var(--accent); }
-.login-card button {
-  width: 100%; padding: 9px 0; font-size: 14px; color: #fff; background: var(--accent);
-  border: none; border-radius: 6px; cursor: pointer;
-}
-.login-card button:hover { background: #3a63b8; }
-.login-error { color: #d45b4d; font-size: 12px; min-height: 16px; margin-top: 10px; }
-
 /* ================= mobile adaptation (≤768px) ================= */
 @media (max-width: 768px) {
   /* avoid iOS auto-zoom on focus */
