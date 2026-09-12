@@ -1,10 +1,5 @@
-# 真实数据与密钥不入库
-data/tasks.json
-data/tasks.json.migrated
-data/projects.json
-data/projects/
-data/auth_token.txt
-data/backups/
+# 真实数据与密钥一律不入库（整个 data/ 目录，含 token、备份密钥、Access 白名单等）
+data/
 __pycache__/
 *.log
 .DS_Store

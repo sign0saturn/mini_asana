@@ -3447,10 +3447,14 @@ function init() {
   backdrop.addEventListener("click", closeMenu);
   $$("#sidebar .nav-item").forEach(n => n.addEventListener("click", closeMenu));
 
-  // logout: clear the token and go to the (public) login page
+  // logout: clear the token; behind Cloudflare Access the session cookie must also be
+  // ended at /cdn-cgi/access/logout (otherwise the edge silently logs you back in),
+  // so ask the server which auth mode is actually in effect before choosing the target
   $("#btn-logout").addEventListener("click", () => {
     clearToken();
-    location.replace("/login");
+    fetch("/api/auth_mode").then(r => r.ok ? r.json() : null).then(m => {
+      location.replace(m && m.mode === "cf-access" ? "/cdn-cgi/access/logout" : "/login");
+    }).catch(() => location.replace("/login"));
   });
 
   // boot: the very first API call doubles as the auth probe — behind Cloudflare Access the

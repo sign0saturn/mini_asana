@@ -32,8 +32,15 @@ openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt -pass file:"$KEY_FILE" \
 rm -f "$TMP"
 trap - EXIT
 
-# prune: keep the newest $KEEP encrypted backups
-ls -1t "$ICLOUD_DIR"/mini-asana-*.tar.gz.enc 2>/dev/null | tail -n +$((KEEP + 1)) | xargs rm -f
+# prune: keep the newest $KEEP encrypted backups. python3 does glob + mtime sort + exact
+# unlink — the iCloud path contains spaces ("Mobile Documents"), which ls|xargs would split
+ICLOUD_DIR="$ICLOUD_DIR" KEEP="$KEEP" python3 - <<'PY' || fail "prune failed"
+import glob, os
+files = glob.glob(os.path.join(os.environ["ICLOUD_DIR"], "mini-asana-*.tar.gz.enc"))
+files.sort(key=os.path.getmtime, reverse=True)  # newest first
+for f in files[int(os.environ["KEEP"]):]:
+    os.unlink(f)
+PY
 SIZE=$(ls -lh "$OUT" | awk '{print $5}')
 KEPT=$(ls -1 "$ICLOUD_DIR"/mini-asana-*.tar.gz.enc 2>/dev/null | wc -l | tr -d ' ')
 echo "$(ts) offsite backup ok: $(basename "$OUT") ($SIZE, $KEPT/$KEEP kept)" >> "$LOG"

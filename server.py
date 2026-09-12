@@ -41,12 +41,14 @@ Data layout:
 Static files: / -> static/index.html, /static/* -> static/*, /login -> login page
 
 Auth (Cloudflare Access first, token fallback; enabled by default):
-  - PRIMARY: a request carrying a non-empty Cf-Access-Authenticated-User-Email
-    header is authorized (Cloudflare Access injects it after the edge login; the
-    origin listens on 127.0.0.1 only and is reachable solely through the
-    cloudflared tunnel, so the header is trustworthy). Optional hardening: set
-    MINI_ASANA_ACCESS_EMAIL or write data/access_email.txt to require the header
-    value to match that email (case-insensitive); unset = any non-empty value.
+  - PRIMARY: Cf-Access-Authenticated-User-Email header auth is OPT-IN. It only
+    engages when an allowlist email is configured (MINI_ASANA_ACCESS_EMAIL env
+    or data/access_email.txt), and then the header value must match it
+    (case-insensitive). Without a configured allowlist the header is IGNORED
+    entirely — a misdirected local request or a stripped/spoofed header never
+    grants access. (Cloudflare Access injects the header after the edge login;
+    the origin listens on 127.0.0.1 only and is reachable solely through the
+    cloudflared tunnel, so a matched header is trustworthy.)
   - FALLBACK: "Authorization: Bearer <token>" with the 32-char hex token from
     data/auth_token.txt (mode 600; malformed files are regenerated at startup).
     Keeps local scripts/watchdog working and covers Access being turned off.
@@ -62,7 +64,14 @@ Auth (Cloudflare Access first, token fallback; enabled by default):
     base-uri) and Cache-Control: no-store.
   - Request bodies are capped at 1 MiB, must be JSON objects; task fields are
     type-checked (string lengths, bool completed, YYYY-MM-DD dates, http/https
-    links only, start->due spans <= 3700 days).
+    links only, start->due spans <= 3700 days). JSON null clears a field.
+  - Write requests to /api/* additionally require Content-Type: application/json
+    (415 otherwise) and, whenever an Origin/Referer header is present, its host
+    must match the request Host (403) — CSRF protection for the Access cookie.
+  - Connections carry a 30s socket timeout (slowloris guard); unexpected errors
+    answer a JSON 500 and the traceback goes to the server log only.
+  - GET /api/auth_mode is public and reports "none"/"token"/"cf-access" so the
+    UI knows whether logout must end the Cloudflare Access session too.
   - For local dev, auth can be disabled with --no-auth or MINI_ASANA_NO_AUTH=1.
   - Port can be overridden with --port or MINI_ASANA_PORT (default 8787).
 """
@@ -214,9 +223,9 @@ LOGIN_HTML = """<!DOCTYPE html>
 
 
 def load_access_email():
-    """Optional allowlist for the Cf-Access-Authenticated-User-Email value:
+    """Allowlist for the Cf-Access-Authenticated-User-Email value:
     MINI_ASANA_ACCESS_EMAIL env var wins, then data/access_email.txt. Empty/unset =
-    any non-empty Access email is accepted."""
+    CF-header auth is DISABLED (the header is not trusted at all)."""
     email = (os.environ.get("MINI_ASANA_ACCESS_EMAIL") or "").strip()
     if not email and os.path.exists(ACCESS_EMAIL_FILE):
         with open(ACCESS_EMAIL_FILE, encoding="utf-8") as f:
@@ -403,13 +412,30 @@ def _valid_date_str(s):
         return False
 
 
+def valid_name(body, field="name", maxlen=200):
+    """Shared payload guard for project/section/group names. Returns (name, None) or (None, error)."""
+    v = body.get(field)
+    if not isinstance(v, str):
+        return None, f"field '{field}' must be a string"
+    v = v.strip()
+    if not v:
+        return None, f"field '{field}' must not be empty"
+    if len(v) > maxlen:
+        return None, f"field '{field}' is too long (max {maxlen} chars)"
+    return v, None
+
+
 def validate_task_fields(body):
     """Strict per-field validation for task create/update bodies (unknown keys are ignored,
-    same as the writers which filter by TASK_FIELDS). Returns an error message, or None."""
+    same as the writers which filter by TASK_FIELDS). Returns an error message, or None.
+    None (JSON null) is accepted for every field except name/completed and means
+    "clear/empty" — the frontend sends null when clearing dates or un-parenting."""
     for k, v in body.items():
         if k not in TASK_FIELDS:
             continue
         if k in TASK_STR_LIMITS:
+            if v is None and k != "name":
+                continue  # null clears the field (normalized to "" by the writers)
             if not isinstance(v, str):
                 return f"field '{k}' must be a string"
             if len(v) > TASK_STR_LIMITS[k]:
@@ -418,11 +444,15 @@ def validate_task_fields(body):
             if not isinstance(v, bool):
                 return "field 'completed' must be a boolean"
         elif k in ("start_on", "due_on"):
+            if v is None:
+                continue  # null clears the date
             if not isinstance(v, str):
                 return f"field '{k}' must be a string"
             if v and not _valid_date_str(v):
                 return f"field '{k}' must be '' or a valid YYYY-MM-DD date"
         elif k == "dependencies":
+            if v is None:
+                continue  # null clears the list
             if not isinstance(v, list) or not all(isinstance(d, str) for d in v):
                 return "field 'dependencies' must be a list of strings"
     name = body.get("name")
@@ -446,6 +476,10 @@ def task_span_error(start_on, due_on):
 class Handler(BaseHTTPRequestHandler):
     server_version = "mini-asana/1.0"
     protocol_version = "HTTP/1.1"
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(30)  # slowloris guard: idle/slow connections die after 30s
 
     # ---------- helpers ----------
     def send_response(self, code, message=None):
@@ -510,6 +544,19 @@ class Handler(BaseHTTPRequestHandler):
         email = (self.headers.get("Cf-Access-Authenticated-User-Email") or "").strip()
         return email or None
 
+    def _cf_authorized(self):
+        """CF-header auth is OPT-IN: it only engages when an allowlist email is configured
+        (MINI_ASANA_ACCESS_EMAIL or data/access_email.txt), and then the header value must
+        match it (case-insensitive). Without a configured allowlist the header is ignored
+        entirely — a misdirected local request or a stripped header never grants access."""
+        email = self._cf_access_email()
+        if not ACCESS_EMAIL or not email or email.lower() != ACCESS_EMAIL.lower():
+            return False
+        if email.lower() not in _CF_ACCESS_SEEN:
+            _CF_ACCESS_SEEN.add(email.lower())
+            print(f"[auth] Cloudflare Access 用户已放行: {email}", flush=True)
+        return True
+
     def _client_token(self):
         """Extract the token from the Authorization: Bearer header ONLY.
         URL query tokens (?token=) were removed: they leak into server logs, browser
@@ -522,12 +569,8 @@ class Handler(BaseHTTPRequestHandler):
     def _authorized(self):
         if not AUTH_ENABLED:
             return True
-        # primary: Cloudflare Access header (optional email allowlist, case-insensitive)
-        email = self._cf_access_email()
-        if email and (not ACCESS_EMAIL or email.lower() == ACCESS_EMAIL.lower()):
-            if email.lower() not in _CF_ACCESS_SEEN:
-                _CF_ACCESS_SEEN.add(email.lower())
-                print(f"[auth] Cloudflare Access 用户已放行: {email}", flush=True)
+        # primary: Cloudflare Access header (opt-in via configured email allowlist)
+        if self._cf_authorized():
             return True
         # fallback: Bearer token
         tok = self._client_token()
@@ -536,6 +579,18 @@ class Handler(BaseHTTPRequestHandler):
         if not tok or not AUTH_TOKEN or not TOKEN_RE.fullmatch(tok):
             return False
         return hmac.compare_digest(tok, AUTH_TOKEN)
+
+    def _auth_mode(self):
+        """GET /api/auth_mode — public, tells the UI where logout should land:
+        'cf-access' (Access session must be ended at /cdn-cgi/access/logout),
+        'token' (plain token flow), 'none' (auth disabled)."""
+        if not AUTH_ENABLED:
+            mode = "none"
+        elif self._cf_authorized():
+            mode = "cf-access"
+        else:
+            mode = "token"
+        self._send_json({"mode": mode})
 
     def _reject_api(self):
         self.close_connection = True  # an unread request body must not poison keep-alive
@@ -550,8 +605,8 @@ class Handler(BaseHTTPRequestHandler):
             body, err = self._read_body()
             if err is not None:
                 status, msg = err
-                if status == 413:
-                    self.close_connection = True  # the oversized body stays unread
+                # any body-level failure leaves bytes unread or state uncertain — drop the connection
+                self.close_connection = True
                 return self._send_error_json(status, msg)
 
         # project collection
@@ -634,29 +689,67 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         # the static shell (/, /app.js, /style.css, /login) is public — it holds no data;
         # every /api/* request needs a valid Bearer token
-        if urlparse(self.path).path.startswith("/api/") and not self._authorized():
+        path = urlparse(self.path).path
+        if path == "/api/auth_mode":  # public: tells the UI where logout should land
+            return self._auth_mode()
+        if path.startswith("/api/") and not self._authorized():
             return self._reject_api()
-        self._route("GET")
+        self._safe_route("GET")
+
+    def _write_guard(self):
+        """Auth + CSRF gates for write requests. Returns True when routing may proceed.
+        CSRF model with the CF Access cookie: cross-site form/fetch writes are blocked by
+        requiring Content-Type: application/json (415) — plus, whenever Origin/Referer is
+        present, its host must match the request Host (403). Header-less curl is unaffected."""
+        if not self._authorized():
+            self._reject_api()
+            return False
+        if not urlparse(self.path).path.startswith("/api/"):
+            return True  # non-API writes 404 in routing; nothing to protect
+        ct = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        cl = (self.headers.get("Content-Length") or "").strip()
+        has_body = bool(cl.isdigit() and int(cl) > 0)
+        if ct != "application/json" and (ct or has_body):
+            self._send_error_json(415, "writes require Content-Type: application/json")
+            return False
+        host = (self.headers.get("Host") or "").lower()
+        for h in ("Origin", "Referer"):
+            v = self.headers.get(h)
+            if v and urlparse(v).netloc.lower() != host:
+                self._send_error_json(403, "cross-origin write rejected")
+                return False
+        return True
+
+    def _safe_route(self, method):
+        """Route with a last-resort 500 JSON — an unexpected exception must never leak a
+        traceback to the client (it goes to the server log instead)."""
+        try:
+            self._route(method)
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
+            pass  # client vanished; nothing to answer
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            try:
+                self._send_error_json(500, "internal error")
+            except Exception:
+                pass
 
     def do_POST(self):
-        if not self._authorized():
-            return self._reject_api()
-        self._route("POST")
+        if self._write_guard():
+            self._safe_route("POST")
 
     def do_PUT(self):
-        if not self._authorized():
-            return self._reject_api()
-        self._route("PUT")
+        if self._write_guard():
+            self._safe_route("PUT")
 
     def do_PATCH(self):
-        if not self._authorized():
-            return self._reject_api()
-        self._route("PATCH")
+        if self._write_guard():
+            self._safe_route("PATCH")
 
     def do_DELETE(self):
-        if not self._authorized():
-            return self._reject_api()
-        self._route("DELETE")
+        if self._write_guard():
+            self._safe_route("DELETE")
 
     def _serve_login(self):
         body = LOGIN_HTML.encode("utf-8")
@@ -698,11 +791,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(out)
 
     def _create_project(self, body):
-        name = (body.get("name") or "").strip()
-        if not name:
-            return self._send_error_json(400, "name required")
-        if len(name) > 200:
-            return self._send_error_json(400, "name too long")
+        name, err = valid_name(body)
+        if err:
+            return self._send_error_json(400, err)
         with LOCK:
             idx = load_index()
             pid = new_project_id(idx)
@@ -712,11 +803,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"id": pid, "name": name, "task_count": 0}, 201)
 
     def _rename_project(self, pid, body):
-        name = (body.get("name") or "").strip()
-        if not name:
-            return self._send_error_json(400, "name required")
-        if len(name) > 200:
-            return self._send_error_json(400, "name too long")
+        name, err = valid_name(body)
+        if err:
+            return self._send_error_json(400, err)
         with LOCK:
             idx = load_index()
             p = self._project_entry(idx, pid)
@@ -837,8 +926,14 @@ class Handler(BaseHTTPRequestHandler):
                     continue
                 if k in ("start_on", "due_on"):
                     v = v or None
+                if k in TASK_STR_LIMITS and v is None:
+                    v = ""  # null clears string fields
+                if k == "dependencies" and v is None:
+                    v = []  # null clears the dependency list
                 if k == "completed":
                     v = bool(v)
+                if k == "section" and not v:
+                    continue  # null/"" section = no change (never create an empty section)
                 if k == "section" and v not in db["sections"]:
                     db["sections"].append(v)
                 task[k] = v
@@ -917,11 +1012,9 @@ class Handler(BaseHTTPRequestHandler):
         return isinstance(rules, dict)
 
     def _create_group(self, pid, body):
-        name = (body.get("name") or "").strip()
-        if not name:
-            return self._send_error_json(400, "name required")
-        if len(name) > 200:
-            return self._send_error_json(400, "name too long")
+        name, err = valid_name(body)
+        if err:
+            return self._send_error_json(400, err)
         rules = body.get("rules") or {}
         if not self._validate_group_rules(rules):
             return self._send_error_json(400, "rules must be an object")
@@ -939,11 +1032,9 @@ class Handler(BaseHTTPRequestHandler):
             if not group:
                 return self._send_error_json(404, "group not found")
             if "name" in body:
-                name = (body.get("name") or "").strip()
-                if not name:
-                    return self._send_error_json(400, "name required")
-                if len(name) > 200:
-                    return self._send_error_json(400, "name too long")
+                name, err = valid_name(body)
+                if err:
+                    return self._send_error_json(400, err)
                 group["name"] = name
             if "rules" in body:
                 if not self._validate_group_rules(body["rules"]):
@@ -963,9 +1054,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"ok": True})
 
     def _create_section(self, pid, body):
-        name = (body.get("name") or "").strip()
-        if not name:
-            return self._send_error_json(400, "name required")
+        name, err = valid_name(body)
+        if err:
+            return self._send_error_json(400, err)
         with LOCK:
             db = load_db(pid)
             if name in db["sections"]:
@@ -975,9 +1066,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"sections": db["sections"]}, 201)
 
     def _rename_section(self, pid, old, body):
-        new = (body.get("name") or "").strip()
-        if not new:
-            return self._send_error_json(400, "name required")
+        new, err = valid_name(body)
+        if err:
+            return self._send_error_json(400, err)
         with LOCK:
             db = load_db(pid)
             if old not in db["sections"]:
@@ -1008,7 +1099,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def _reorder(self, pid, body):
         section = body.get("section")
-        ids = body.get("ids") or []
+        ids = body.get("ids")
+        if not (isinstance(section, str) and section.strip()):
+            return self._send_error_json(400, "section must be a non-empty string")
+        if not (isinstance(ids, list) and all(isinstance(i, str) for i in ids)):
+            return self._send_error_json(400, "ids must be a list of strings")
+        section = section.strip()
         with LOCK:
             db = load_db(pid)
             in_section = [t for t in db["tasks"] if t["section"] == section]
@@ -1082,10 +1178,10 @@ def main():
         print("[auth] token 认证已启用，token 见 data/auth_token.txt")
         ACCESS_EMAIL = load_access_email()
         if ACCESS_EMAIL:
-            print(f"[auth] Cloudflare Access 邮箱白名单: {ACCESS_EMAIL}")
+            print(f"[auth] Cloudflare Access 头认证已启用，邮箱白名单: {ACCESS_EMAIL}")
         else:
-            print("[auth] Cloudflare Access 头认证已启用（未设邮箱白名单：任何非空 Access 邮箱均放行；"
-                  "可用 MINI_ASANA_ACCESS_EMAIL 或 data/access_email.txt 收紧）")
+            print("[auth] Cloudflare Access 头认证未启用（未配置邮箱白名单，Cf-* 头将被忽略；"
+                  "可用 MINI_ASANA_ACCESS_EMAIL 或 data/access_email.txt 开启）")
 
     httpd = ThreadingHTTPServer((HOST, args.port), Handler)
     print(f"mini-asana running at http://{HOST}:{args.port}")
