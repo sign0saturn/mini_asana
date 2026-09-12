@@ -151,9 +151,13 @@ mini-asana/
 └── deploy/              # optional: macOS persistence & public exposure
     ├── local.miniasana.plist           # app persistence
     ├── local.miniasana-tunnel.plist    # cloudflared tunnel persistence
-    ├── local.miniasana-backup.plist    # daily backup (03:17)
+    ├── local.miniasana-backup.plist    # daily local backup (03:17)
+    ├── local.miniasana-backup-offsite.plist  # daily encrypted offsite backup to iCloud (04:23)
     ├── local.miniasana-watchdog.plist  # tunnel watchdog (every 120s)
     ├── backup.sh
+    ├── backup_offsite.sh
+    ├── restore_check.sh
+    ├── rotate_token.sh
     └── watchdog.sh
 ```
 
@@ -161,7 +165,7 @@ mini-asana/
 
 ### macOS launchd persistence
 
-The 4 plists under `deploy/` assume the project lives at `~/mini-asana`, and that `backup.sh` / `watchdog.sh` have been copied to `~/mini-asana/` (the plists reference that path):
+The 5 plists under `deploy/` assume the project lives at `~/mini-asana`, and that the `.sh` scripts they reference have been copied to `~/mini-asana/`:
 
 ```bash
 # 1) replace the placeholder username (or edit by hand)
@@ -198,9 +202,41 @@ Note on caching: the app sends `Cache-Control: no-store` on every response, so C
 ### Daily backup and tunnel watchdog
 
 - `backup.sh`: archives task data into `data/backups/`, keeping the latest 8; with the backup plist it runs daily at 03:17. Multi-project layout: packs `data/projects.json` + `data/projects/` into a `.tar.gz`; falls back to copying the legacy single-file `data/tasks.json` when present.
-- `watchdog.sh`: every 2 minutes, checks whether your domain is properly served by Cloudflare edge (resolves the real edge IP via DoH first, then connects directly — avoiding fake-ip DNS interference); after 2 consecutive failures it kickstarts the tunnel service. Two key parameters can be overridden via environment variables:
+- `watchdog.sh`: every 2 minutes runs two probes — the origin app (`127.0.0.1:8787/api/projects` with the Bearer token; 2 strikes restarts the app service) and the edge (DoH + `--resolve`; 200/401/302/303 are healthy, 2 strikes restart the tunnel). Parameters overridable via environment variables:
   - `WATCHDOG_DOMAIN`: domain to monitor (default `your-domain.example.com` — must be changed)
   - `WATCHDOG_TUNNEL_LABEL`: launchd Label of the tunnel service (default `local.miniasana-tunnel`)
+  - `WATCHDOG_APP_LABEL`: launchd Label of the app service (default `local.miniasana`)
+  - `WATCHDOG_ORIGIN`: origin base URL (default `http://127.0.0.1:8787`)
+
+### Offsite encrypted backup & restore (iCloud Drive)
+
+`backup_offsite.sh` packs `data/projects.json` + `data/projects/`, encrypts with AES-256-CBC (PBKDF2, 600k iterations, `openssl enc`) using the key in `data/backup_key.txt`, and drops the result into iCloud Drive (`~/Library/Mobile Documents/com~apple~CloudDocs/mini-asana-backups/`), keeping the latest 30. With `local.miniasana-backup-offsite.plist` it runs daily at 04:23 (after the local 03:17 backup).
+
+Setup:
+
+```bash
+# on the server: one-time key generation (the key NEVER leaves the machine)
+umask 077 && openssl rand -hex 24 > ~/mini-asana/data/backup_key.txt
+# store a copy of that key in your password manager — it is the ONLY way to read
+# the iCloud backups if the machine dies
+cp deploy/backup_offsite.sh deploy/restore_check.sh ~/mini-asana/
+# plist: sed YOUR_USERNAME like the others, then bootstrap
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.miniasana-backup-offsite.plist
+```
+
+Restore drill (run any time; non-zero exit means the drill failed): `~/mini-asana/restore_check.sh` decrypts the newest iCloud backup into a temp dir, untars it, validates every JSON, prints project/task counts plus latest-activity evidence, and cleans up.
+
+Disaster recovery on a new machine:
+
+```bash
+# 1) install mini-asana and stop it; make sure ~/mini-asana/data/ is empty/fresh
+# 2) copy the newest mini-asana-*.tar.gz.enc out of iCloud Drive (mini-asana-backups/)
+# 3) write the key you saved in your password manager into key.txt (one line, 48 hex chars)
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -pass file:key.txt \
+  -in mini-asana-YYYYMMDD-HHMMSS.tar.gz.enc -out data.tar.gz
+tar -xzf data.tar.gz -C ~/mini-asana/data/   # restores projects.json + projects/
+# 4) start mini-asana; regenerate auth_token.txt afterwards if you also lost it
+```
 
 ## Tech notes
 
