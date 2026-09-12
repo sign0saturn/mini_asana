@@ -40,7 +40,7 @@ A self-hosted, single-machine mini Asana — a personal project / home-improveme
 - **Mobile support**: responsive layout, touch long-press dragging, bottom-sheet detail panel
 - **Task detail panel**: section, parent task, assignee, start/due dates, Category/Effort/Priority, multi-select dependencies, notes, link
 - **Subtasks (one level)**: nest a task under another by dragging it onto a row's body in List, or via the detail panel's Parent-task dropdown; drag out to un-nest. Collapse/expand with disclosure triangles in List and Timeline (remembered per project) — Timeline parent bars also carry an on-bar caret (placed outside-left on narrow bars); subtasks indent deeper in List for a clear visual hierarchy, and their timeline bars start with a matching small visual gap (dates unaffected), and a subtask without its own category inherits its parent's bar color (display only); parents show a done/total progress badge; board cards carry a "↳ parent" label
-- **Token access auth** (on by default, can be disabled) for public-exposure scenarios
+- **Access auth**: Cloudflare Access header trust (optional single-email allowlist) with a Bearer-token fallback (on by default, can be disabled) for public-exposure scenarios
 - **Bilingual UI (中文 / English)**: language switcher at the bottom of the sidebar; remembers your choice (localStorage) and defaults to your browser language; dates and the login page are localized too
 
 ## Quick start
@@ -58,10 +58,12 @@ Open `http://127.0.0.1:8787` in your browser.
 
 ### Auth (enabled by default)
 
-- **On first start** a 32-char hex token is generated into `data/auth_token.txt` (file mode 600) with a notice printed to the terminal; later starts read the file as-is. A malformed token file (not 32 lowercase hex chars) is regenerated automatically at startup.
-- **Auth model**: the static shell (`/`, `/app.js`, `/style.css`, `/login`) is public — it contains no data. Every `/api/*` request requires `Authorization: Bearer <token>`; anything else gets `401 {"error":"unauthorized"}`.
+Two layers, Access first, token as fallback:
+
+- **Cloudflare Access (primary)**: when the app sits behind a cloudflared tunnel with Cloudflare Access in front, any request carrying a non-empty `Cf-Access-Authenticated-User-Email` header is authorized — users pass the edge login (e.g. Google OAuth) and never see a token prompt. This is safe because the origin listens on 127.0.0.1 and external traffic can only arrive through the tunnel (the edge scrubs client-supplied `Cf-*` headers). Optional hardening: set `MINI_ASANA_ACCESS_EMAIL` or write `data/access_email.txt` to allow only that one email (case-insensitive).
+- **Bearer token (fallback)**: `Authorization: Bearer <token>` with the 32-char hex token from `data/auth_token.txt` (generated mode 600 on first start; malformed files are regenerated). Keeps local scripts and the watchdog working, and covers the Access-off case. `/login` remains as the fallback login page (it auto-skips straight into the app when the API already answers without a token).
 - **No URL query tokens**: `?token=` is NOT accepted by the API (query strings leak into logs, browser history and referrers). Old bookmarks still work once: the app validates a well-formed `?token=` through the Bearer flow, stores it in localStorage, and strips the query from the address bar.
-- The browser flow: no/expired token → redirect to the public `/login` page; enter the token there (validated against the API, stored in localStorage) → back to the app.
+- The static shell (`/`, `/app.js`, `/style.css`, `/login`) is public — it contains no data.
 - **Disable auth** (local development only): `python3 server.py --no-auth`, or env var `MINI_ASANA_NO_AUTH=1`.
 - **Change port**: `python3 server.py --port 9000`, or env var `MINI_ASANA_PORT=9000` (default 8787).
 - To use your own token: write it into `data/auth_token.txt` (a single line of 32 hex chars) before starting.
@@ -71,7 +73,8 @@ Open `http://127.0.0.1:8787` in your browser.
 - **Response headers** (on every response, including errors and static files): `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'; object-src 'none'; base-uri 'none'`, plus `Cache-Control: no-store`. The CSP deliberately omits `script-src`/`style-src` (the login page is an inline script).
 - **Request limits**: bodies are capped at 1 MiB (413 beyond, body never read), `Content-Length` must be a valid non-negative integer, the JSON top level must be an object.
 - **Task field validation** (POST/PUT): strings with length caps (name ≤500 and non-empty, notes ≤20000, others ≤500), `completed` must be a real boolean, `start_on`/`due_on` must be `""` or a valid `YYYY-MM-DD`, `dependencies` must be a string list, `link` must start with `http://`/`https://` (the UI renders other protocols as plain text), and a task's start→due span may not exceed 3700 days.
-- **Token rotation**: run `deploy/rotate_token.sh` on the server — it writes a fresh 32-hex token to `data/auth_token.txt` (mode 600) and restarts the launchd service (`MINIASANA_LABEL` overrides the service label). All existing sessions are invalidated; log in again on every device.
+- **Token rotation**: run `deploy/rotate_token.sh` on the server — it writes a fresh 32-hex token to `data/auth_token.txt` (mode 600) and restarts the launchd service (`MINIASANA_LABEL` overrides the service label). All existing token sessions are invalidated; log in again on every device (Cloudflare Access sessions are unaffected).
+- **Watchdog**: `deploy/watchdog.sh` probes the origin (`/api/projects` with the Bearer token, restarts the app service) and the edge (DoH + `--resolve`; 200/401/302/303 count as healthy, restarts the tunnel) every 2 minutes — the 302/303 codes keep Cloudflare Access intercepts from being misread as outages.
 
 You can also start with `./start.sh` (equivalent to `python3 server.py`, auth enabled).
 

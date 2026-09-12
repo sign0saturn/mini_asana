@@ -3453,8 +3453,10 @@ function init() {
     location.replace("/login");
   });
 
-  // boot: works straight away in --no-auth mode or with a valid stored/migrated token;
-  // a 401 anywhere triggers clearToken + redirect to /login inside api()
+  // boot: the very first API call doubles as the auth probe — behind Cloudflare Access the
+  // server authorizes via the injected Cf-Access-* header, so a 200 needs no token at all;
+  // otherwise a stored Bearer token is attached automatically, and any 401 clears it and
+  // redirects to /login inside api()
   boot().then(render).catch(e => {
     if (e.message !== "unauthorized") {
       $("#view-container").innerHTML = `<div class="tl-empty-hint">${esc(tr("app.loadFailed", { msg: e.message }))}</div>`;

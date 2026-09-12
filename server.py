@@ -40,14 +40,21 @@ Data layout:
 
 Static files: / -> static/index.html, /static/* -> static/*, /login -> login page
 
-Auth (simple token auth for public exposure, enabled by default):
-  - On first start, a 32-char hex token is generated into data/auth_token.txt
-    (mode 600); a malformed token file is regenerated at startup.
+Auth (Cloudflare Access first, token fallback; enabled by default):
+  - PRIMARY: a request carrying a non-empty Cf-Access-Authenticated-User-Email
+    header is authorized (Cloudflare Access injects it after the edge login; the
+    origin listens on 127.0.0.1 only and is reachable solely through the
+    cloudflared tunnel, so the header is trustworthy). Optional hardening: set
+    MINI_ASANA_ACCESS_EMAIL or write data/access_email.txt to require the header
+    value to match that email (case-insensitive); unset = any non-empty value.
+  - FALLBACK: "Authorization: Bearer <token>" with the 32-char hex token from
+    data/auth_token.txt (mode 600; malformed files are regenerated at startup).
+    Keeps local scripts/watchdog working and covers Access being turned off.
+    URL query tokens (?token=) are NOT accepted: they leak via logs, history
+    and referrers. The frontend migrates old ?token= bookmarks into localStorage
+    once (validated through the Bearer flow), then strips the query.
   - The static shell (/, /app.js, /style.css, /login) is PUBLIC — it contains no
-    data (the source is public anyway). /api/* requires "Authorization: Bearer
-    <token>". URL query tokens (?token=) are NOT accepted: they leak via logs,
-    history and referrers. The frontend migrates old ?token= bookmarks into
-    localStorage once (validated through the Bearer flow), then strips the query.
+    data (the source is public anyway). /login remains as the fallback login page.
   - Client tokens must match ^[0-9a-f]{32}$ before comparison (keeps
     hmac.compare_digest safe from non-ASCII/garbage input).
   - Every response carries Referrer-Policy: no-referrer, X-Content-Type-Options:
@@ -77,6 +84,7 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE, "data")
 DATA_FILE = os.path.join(DATA_DIR, "tasks.json")  # legacy single-project data file, used only for startup migration
 TOKEN_FILE = os.path.join(DATA_DIR, "auth_token.txt")
+ACCESS_EMAIL_FILE = os.path.join(DATA_DIR, "access_email.txt")
 PROJECTS_DIR = os.path.join(DATA_DIR, "projects")
 INDEX_FILE = os.path.join(DATA_DIR, "projects.json")
 STATIC_DIR = os.path.join(BASE, "static")
@@ -87,6 +95,8 @@ LOCK = threading.Lock()
 
 AUTH_ENABLED = True
 AUTH_TOKEN = None
+ACCESS_EMAIL = None          # optional allowlist for the Cf-Access-Authenticated-User-Email value
+_CF_ACCESS_SEEN = set()      # emails already logged this process (one line each)
 
 TASK_FIELDS = {
     "name", "section", "assignee", "start_on", "due_on", "completed",
@@ -177,6 +187,8 @@ LOGIN_HTML = """<!DOCTYPE html>
       .then(function (r) { if (r.ok) ok(); else if (r.status === 401) bad(); else err(S.srvErr + r.status); })
       .catch(function () { err(S.netErr); });
   }
+  // behind Cloudflare Access the API answers without any token: skip the form entirely
+  fetch("/api/tasks").then(function (r) { if (r.ok) go(); }).catch(function () {});
   var saved = "";
   try { saved = localStorage.getItem(KEY) || ""; } catch (e) {}
   if (saved) {
@@ -199,6 +211,17 @@ LOGIN_HTML = """<!DOCTYPE html>
 </body>
 </html>
 """
+
+
+def load_access_email():
+    """Optional allowlist for the Cf-Access-Authenticated-User-Email value:
+    MINI_ASANA_ACCESS_EMAIL env var wins, then data/access_email.txt. Empty/unset =
+    any non-empty Access email is accepted."""
+    email = (os.environ.get("MINI_ASANA_ACCESS_EMAIL") or "").strip()
+    if not email and os.path.exists(ACCESS_EMAIL_FILE):
+        with open(ACCESS_EMAIL_FILE, encoding="utf-8") as f:
+            email = f.read().strip()
+    return email or None
 
 
 def load_or_create_token():
@@ -479,6 +502,14 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     # ---------- auth ----------
+    def _cf_access_email(self):
+        """Email injected by Cloudflare Access after a successful edge login.
+        Trustworthy because the origin listens on 127.0.0.1 and external traffic
+        can only arrive through the cloudflared tunnel (which scrubs/overwrites
+        client-supplied Cf-* headers at the edge)."""
+        email = (self.headers.get("Cf-Access-Authenticated-User-Email") or "").strip()
+        return email or None
+
     def _client_token(self):
         """Extract the token from the Authorization: Bearer header ONLY.
         URL query tokens (?token=) were removed: they leak into server logs, browser
@@ -491,6 +522,14 @@ class Handler(BaseHTTPRequestHandler):
     def _authorized(self):
         if not AUTH_ENABLED:
             return True
+        # primary: Cloudflare Access header (optional email allowlist, case-insensitive)
+        email = self._cf_access_email()
+        if email and (not ACCESS_EMAIL or email.lower() == ACCESS_EMAIL.lower()):
+            if email.lower() not in _CF_ACCESS_SEEN:
+                _CF_ACCESS_SEEN.add(email.lower())
+                print(f"[auth] Cloudflare Access 用户已放行: {email}", flush=True)
+            return True
+        # fallback: Bearer token
         tok = self._client_token()
         # strict format gate BEFORE compare_digest: garbage/non-ASCII tokens would
         # otherwise raise TypeError inside hmac.compare_digest (traceback noise)
@@ -1024,7 +1063,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global AUTH_ENABLED, AUTH_TOKEN
+    global AUTH_ENABLED, AUTH_TOKEN, ACCESS_EMAIL
     ap = argparse.ArgumentParser(description="mini-asana 本地单机版简易 Asana")
     ap.add_argument("--no-auth", action="store_true",
                     help="关闭 token 认证（本地开发用；也可用环境变量 MINI_ASANA_NO_AUTH=1）")
@@ -1041,6 +1080,12 @@ def main():
     else:
         AUTH_TOKEN = load_or_create_token()
         print("[auth] token 认证已启用，token 见 data/auth_token.txt")
+        ACCESS_EMAIL = load_access_email()
+        if ACCESS_EMAIL:
+            print(f"[auth] Cloudflare Access 邮箱白名单: {ACCESS_EMAIL}")
+        else:
+            print("[auth] Cloudflare Access 头认证已启用（未设邮箱白名单：任何非空 Access 邮箱均放行；"
+                  "可用 MINI_ASANA_ACCESS_EMAIL 或 data/access_email.txt 收紧）")
 
     httpd = ThreadingHTTPServer((HOST, args.port), Handler)
     print(f"mini-asana running at http://{HOST}:{args.port}")
