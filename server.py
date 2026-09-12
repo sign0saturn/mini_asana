@@ -65,9 +65,11 @@ Auth (Cloudflare Access first, token fallback; enabled by default):
   - Request bodies are capped at 1 MiB, must be JSON objects; task fields are
     type-checked (string lengths, bool completed, YYYY-MM-DD dates, http/https
     links only, start->due spans <= 3700 days). JSON null clears a field.
-  - Write requests to /api/* additionally require Content-Type: application/json
-    (415 otherwise) and, whenever an Origin/Referer header is present, its host
-    must match the request Host (403) — CSRF protection for the Access cookie.
+  - Write requests to /api/* with a body must use Content-Type: application/json
+    (415 otherwise; a bodyless write without a Content-Type stays allowed for
+    existing no-body operations) and, whenever an Origin/Referer header is
+    present, its host must match the request Host (403) — CSRF protection for
+    the Access cookie. Rejections close the connection (the body was not read).
   - Connections carry a 30s socket timeout (slowloris guard); unexpected errors
     answer a JSON 500 and the traceback goes to the server log only.
   - GET /api/auth_mode is public and reports "none"/"token"/"cf-access" so the
@@ -700,24 +702,33 @@ class Handler(BaseHTTPRequestHandler):
         """Auth + CSRF gates for write requests. Returns True when routing may proceed.
         CSRF model with the CF Access cookie: cross-site form/fetch writes are blocked by
         requiring Content-Type: application/json (415) — plus, whenever Origin/Referer is
-        present, its host must match the request Host (403). Header-less curl is unaffected."""
+        present, its host must match the request Host (403). A bodyless write without a
+        Content-Type stays allowed (existing no-body operations); header-less curl is
+        unaffected. Every rejection closes the connection: it fires before the body is
+        read, and leftover bytes must not poison keep-alive parsing."""
         if not self._authorized():
             self._reject_api()
             return False
         if not urlparse(self.path).path.startswith("/api/"):
             return True  # non-API writes 404 in routing; nothing to protect
-        ct = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+        # validate the Content-Length TEXT before any int() — a garbage or absurdly long
+        # digit string would raise ValueError outside _safe_route (Python 3.11+ caps
+        # int() at 4300 digits)
         cl = (self.headers.get("Content-Length") or "").strip()
-        has_body = bool(cl.isdigit() and int(cl) > 0)
+        if cl and not re.fullmatch(r"\d{1,10}", cl):
+            self.close_connection = True
+            return self._send_error_json(400, "invalid Content-Length") or False
+        has_body = bool(cl and int(cl) > 0)
+        ct = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
         if ct != "application/json" and (ct or has_body):
-            self._send_error_json(415, "writes require Content-Type: application/json")
-            return False
+            self.close_connection = True
+            return self._send_error_json(415, "writes require Content-Type: application/json") or False
         host = (self.headers.get("Host") or "").lower()
         for h in ("Origin", "Referer"):
             v = self.headers.get(h)
             if v and urlparse(v).netloc.lower() != host:
-                self._send_error_json(403, "cross-origin write rejected")
-                return False
+                self.close_connection = True
+                return self._send_error_json(403, "cross-origin write rejected") or False
         return True
 
     def _safe_route(self, method):
