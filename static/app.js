@@ -81,10 +81,21 @@ function sectionTasks(sec) {
 function childrenOf(pid) { return state.tasks.filter(t => t.parent_id === pid).sort((a, b) => a.order - b.order); }
 function hasChildren(id) { return state.tasks.some(t => t.parent_id === id); }
 function topTasks(sec) { return state.tasks.filter(t => t.section === sec && !t.parent_id).sort((a, b) => a.order - b.order); }
-/* flat display sequence of a section: each top-level task followed by its subtasks */
+/* display grouping: a subtask renders under its parent only when both live in the SAME section
+   (a completed subtask can be archived on its own while the parent stays active). A parented task
+   whose parent is missing or in another section renders as a top-level row of its OWN section.
+   Display-level rule only — the data model (parent_id) is never touched. */
+function parentTask(t) { return t.parent_id ? taskById(t.parent_id) : null; }
+function isChildIn(t, sec) { const p = parentTask(t); return !!p && p.section === sec; }
+function effectiveTop(sec) {
+  return state.tasks.filter(t => t.section === sec && !isChildIn(t, sec)).sort((a, b) => a.order - b.order);
+}
+function childrenIn(pid, sec) { return childrenOf(pid).filter(c => c.section === sec); }
+function hasChildrenIn(pid, sec) { return state.tasks.some(t => t.parent_id === pid && t.section === sec); }
+/* flat display sequence of a section: each effective top-level task followed by its same-section subtasks */
 function flatSectionList(sec) {
   const out = [];
-  for (const t of topTasks(sec)) { out.push(t); out.push(...childrenOf(t.id)); }
+  for (const t of effectiveTop(sec)) { out.push(t); out.push(...childrenIn(t.id, sec)); }
   return out;
 }
 
@@ -1539,10 +1550,11 @@ function renderList(container) {
     secEl.appendChild(header);
 
     // sort top-level tasks within the section; subtasks stay under their parent, sorted among siblings
-    for (const task of sortedForList(topTasks(sec))) {
+    // (only SAME-section subtasks nest — an archived-away subtask renders in its own section)
+    for (const task of sortedForList(effectiveTop(sec))) {
       secEl.appendChild(makeListRow(task, sec, {}));
       if (!isCollapsed(task.id)) {
-        for (const sub of sortedForList(childrenOf(task.id))) secEl.appendChild(makeListRow(sub, sec, { isSub: true }));
+        for (const sub of sortedForList(childrenIn(task.id, sec))) secEl.appendChild(makeListRow(sub, sec, { isSub: true }));
       }
     }
 
@@ -1669,7 +1681,7 @@ function makeListRow(task, sec, opts) {
     const ind = document.createElement("span");
     ind.className = "sub-indent";
     row.appendChild(ind);
-  } else if (hasChildren(task.id)) {
+  } else if (hasChildrenIn(task.id, sec)) {
     const tog = document.createElement("button");
     tog.type = "button";
     tog.className = "sub-toggle";
@@ -2014,8 +2026,8 @@ function renderGroupView(container) {
   let shown = 0;
   for (const sec of state.sections) {
     const rows = [];
-    for (const t of sortedForList(topTasks(sec))) {
-      const mk = sortedForList(childrenOf(t.id).filter(k => matchSmartGroup(k, rules)));
+    for (const t of sortedForList(effectiveTop(sec))) {
+      const mk = sortedForList(childrenIn(t.id, sec).filter(k => matchSmartGroup(k, rules)));
       if (matchSmartGroup(t, rules)) {
         rows.push({ t: t, opts: {} });
         if (!isCollapsed(t.id)) for (const k of mk) rows.push({ t: k, opts: { isSub: true } });
@@ -2565,8 +2577,9 @@ function renderTimeline(container) {
   let y = TL.headerH;
   const rowEls = [];
   for (const sec of state.sections) {
-    // subtasks nest under a dated parent; a subtask whose parent is missing/undated renders as a normal row
-    const secTasks = topoSortTasks(sectionTasks(sec).filter(t => bars.has(t.id) && (!t.parent_id || !bars.has(t.parent_id))));
+    // subtasks nest under a dated SAME-section parent; a subtask whose parent is missing/undated
+    // or lives in another section (e.g. archived alone) renders as a normal row of its own section
+    const secTasks = topoSortTasks(sectionTasks(sec).filter(t => bars.has(t.id) && (!isChildIn(t, sec) || !bars.has(t.parent_id))));
     const secRow = document.createElement("div");
     secRow.className = "tl-row tl-section-row";
     secRow.style.height = TL.secRowH + "px";
@@ -2575,13 +2588,13 @@ function renderTimeline(container) {
     inner.appendChild(secRow);
     y += TL.secRowH;
 
-    // expanded parents are followed by their dated subtask rows; collapsed parents hide them
+    // expanded parents are followed by their dated SAME-section subtask rows; collapsed parents hide them
     // (hidden rows never get a bar position, so dependency arrows to/from them are skipped automatically)
     const rowsToRender = [];
     for (const t of secTasks) {
       rowsToRender.push({ t, isSub: false });
-      if (!t.parent_id && !isCollapsed(t.id)) {
-        for (const c of topoSortTasks(childrenOf(t.id).filter(x => bars.has(x.id)))) rowsToRender.push({ t: c, isSub: true });
+      if (!isChildIn(t, sec) && !isCollapsed(t.id)) {
+        for (const c of topoSortTasks(childrenIn(t.id, sec).filter(x => bars.has(x.id)))) rowsToRender.push({ t: c, isSub: true });
       }
     }
     for (const { t, isSub } of rowsToRender) {
@@ -2596,7 +2609,7 @@ function renderTimeline(container) {
         const ind = document.createElement("span");
         ind.className = "sub-indent";
         nameEl.appendChild(ind);
-      } else if (hasChildren(t.id)) {
+      } else if (hasChildrenIn(t.id, sec)) {
         const tog = document.createElement("button");
         tog.type = "button";
         tog.className = "sub-toggle";
@@ -2661,7 +2674,7 @@ function renderTimeline(container) {
       bar.appendChild(label);
       // parent bars: collapse/expand caret on the bar itself (same state as the label-column triangle);
       // narrow bars get the caret just outside the left edge; its events never reach drag/resize/multi-select
-      if (!isSub && hasChildren(t.id)) {
+      if (!isSub && hasChildrenIn(t.id, sec)) {
         const barW = xOf(b.due) + TL.dayW - xOf(b.start);
         const caret = document.createElement("span");
         caret.className = "tl-bar-caret" + (barW < (isMobile ? 56 : 44) ? " outside" : "");
