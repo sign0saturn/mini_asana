@@ -242,6 +242,10 @@ tar -xzf data.tar.gz -C ~/mini-asana/data/   # restores projects.json + projects
 # 4) start mini-asana; regenerate auth_token.txt afterwards if you also lost it
 ```
 
+## Development
+
+Regression suites live in [`tests/`](tests/) (API security, raw-socket write-guard hygiene, render grouping). One command spins up a throwaway local instance and runs everything: `tests/run_local.sh`.
+
 ## Tech notes
 
 - **Zero dependencies**: the backend uses only the Python standard library (threaded `http.server`, atomic JSON writes, token auth); the frontend is vanilla HTML/CSS/JS with no npm and no build — edit and refresh
